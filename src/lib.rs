@@ -8,7 +8,7 @@
 
 pub use sqlx;
 pub use wormx_core::{
-    BelongsTo, BelongsToRef, BindValue, Column, ColumnDef, ColumnExpr, ColumnRef, Config,
+    BelongsTo, BelongsToRef, BindValue, Case, Column, ColumnDef, ColumnExpr, ColumnRef, Config,
     ConfigError, CountPlan, CountProjection, Cte, CustomNode, Db, Deferred, Delete, DeletePlan,
     DeleteRenderer, Dialect, Expr, ExprKind, Filtered, Fixity, Function, FunctionArgs, Get,
     HasMany, HasManyRef, Include, Insert, InsertPlan, InsertRenderer, IntoExpr, IntoSelect, Join,

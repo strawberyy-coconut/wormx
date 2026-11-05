@@ -775,6 +775,17 @@ impl<T> Column<T> {
         self.expr::<D>().count_distinct()
     }
 
+    /// Casts this column to the SQL type named by `to`.
+    ///
+    /// `to` is written into the query verbatim, so it must be a constant such
+    /// as `"NVARCHAR(200)"` or `"DECIMAL(10, 2)"`. Never pass user input.
+    pub fn cast<D: Dialect>(self, to: &'static str) -> Expr<T, D>
+    where
+        T: 'static,
+    {
+        self.expr::<D>().cast(to)
+    }
+
     /// Orders by the column ascending.
     pub fn asc<D: Dialect>(self) -> Order<D>
     where

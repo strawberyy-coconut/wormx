@@ -175,6 +175,33 @@ pub fn render_expr_kind<D: SqlDialect>(
             render_expr(operand, writer)?;
             render_window(window, writer)
         }
+        ExprKind::Case {
+            branches,
+            otherwise,
+        } => {
+            writer.push("CASE");
+            for (condition, value) in branches.iter_mut() {
+                writer.push(" WHEN ");
+                render_expr(condition, writer)?;
+                writer.push(" THEN ");
+                render_expr(value, writer)?;
+            }
+            if let Some(otherwise) = otherwise {
+                writer.push(" ELSE ");
+                render_expr(otherwise, writer)?;
+            }
+            writer.push(" END");
+            Ok(())
+        }
+        ExprKind::Cast { operand, to } => {
+            writer.push("CAST");
+            writer.write_group_start();
+            render_expr(operand, writer)?;
+            writer.push(" AS ");
+            writer.push(to);
+            writer.write_group_end();
+            Ok(())
+        }
         ExprKind::Custom(node) => node.render(writer),
     }
 }

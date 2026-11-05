@@ -39,6 +39,16 @@ instead of implementing SQL. `Join` exposes its `kind`, `source`, and `on`
 fields, and `ExprKind` is public, so a renderer can inspect the plan rather than
 emit `JOIN ... ON ...`.
 
+### What belongs in core
+
+`wormx-core` is deliberately conservative. It accepts an operation only when
+several database backends share it as a first-class concept, not merely one or
+two. SQL-standard operations such as `CASE`, `CAST`, and `COALESCE` qualify.
+Dialect-specific spellings do not: put them behind a `SqlSyntax` hook, in the
+driver crate, or express them with `sql_function!` / `operator!`. This keeps the
+neutral AST portable and stops one database's syntax from leaking into
+expressions meant to run elsewhere.
+
 Compile-time introspection is pluggable too. `wormx-macros-core` accepts a
 `TableDriver` — a describe function plus a constraints function — and
 `expand_table` runs the same cache and code generator for any driver. The
@@ -586,6 +596,25 @@ db.query(Users::all())
     .await?;
 ```
 
+`CASE` and `CAST` are core expressions too:
+
+```rust
+let flag = Expr::<i32, MssqlDialect>::case()
+    .when(Users::fields().active().eq(true), 1)
+    .otherwise(0);
+
+let name = Users::fields().name().cast::<MssqlDialect>("NVARCHAR(200)");
+```
+
+`Case::otherwise` returns `Expr<T, D>`. `Case::end` omits `ELSE`, so a missing
+branch produces `NULL`, and returns `Expr<Option<T>, D>`. The type name passed
+to `cast` is written verbatim and must be a constant such as
+`"NVARCHAR(200)"`; never pass user input.
+
+`COUNT` stays dialect-aware: SQL Server renders `COUNT` and `COUNT(*)` as
+`COUNT_BIG` and `COUNT_BIG(*)`, while other dialects keep their native
+spelling.
+
 Filters can also be built without a database handle:
 
 ```rust
@@ -692,7 +721,9 @@ Supported directly:
   dialects implementing `SupportsFullJoin`; MySQL and MariaDB do not)
 - `GROUP BY` and `HAVING`
 - `ORDER BY`, `LIMIT`, `OFFSET`
-- `COUNT(*)`, `COUNT(expr)`, `COUNT(DISTINCT expr)`
+- `COUNT(*)`, `COUNT(expr)`, `COUNT(DISTINCT expr)` (SQL Server renders these
+  as `COUNT_BIG`)
+- `CASE WHEN ... THEN ... ELSE ... END` and `CAST(expr AS type)`
 - CTEs (`.with(...)`) and window functions (`.over(...)`)
 - insert, update, delete, and upsert builders
 - `RETURNING` on dialects that support it (`exec_returning`)

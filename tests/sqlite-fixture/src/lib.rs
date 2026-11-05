@@ -156,6 +156,56 @@ mod tests {
     }
 
     #[test]
+    fn renders_case_expressions() {
+        use wormx::{Expr, SqlWriter, SqliteDialect};
+
+        let dialect = SqliteDialect;
+        let mut writer = SqlWriter::new(dialect);
+        let mut expr = Expr::<i32, SqliteDialect>::case()
+            .when(Users::fields().active().eq(true), 1)
+            .when(Users::fields().name().eq("Alice"), 2)
+            .otherwise(0);
+
+        expr.render(&mut writer).expect("render CASE expression");
+        let (sql, _args) = writer.finish();
+        assert_eq!(
+            sql,
+            "CASE WHEN (\"users\".\"active\") = (?) THEN ? WHEN (\"users\".\"name\") = (?) THEN ? ELSE ? END"
+        );
+
+        let mut writer = SqlWriter::new(dialect);
+        let mut expr = Expr::<i32, SqliteDialect>::case()
+            .when(Users::fields().active().eq(true), 1)
+            .end();
+
+        expr.render(&mut writer).expect("render CASE without ELSE");
+        let (sql, _args) = writer.finish();
+        assert_eq!(sql, "CASE WHEN (\"users\".\"active\") = (?) THEN ? END");
+    }
+
+    #[test]
+    fn renders_cast_expressions() {
+        use wormx::{Expr, SqlWriter, SqliteDialect};
+
+        let dialect = SqliteDialect;
+        let mut writer = SqlWriter::new(dialect);
+        let mut expr = Users::fields()
+            .name()
+            .cast::<SqliteDialect>("NVARCHAR(200)");
+
+        expr.render(&mut writer).expect("render column CAST");
+        let (sql, _args) = writer.finish();
+        assert_eq!(sql, "CAST(\"users\".\"name\" AS NVARCHAR(200))");
+
+        let mut writer = SqlWriter::new(dialect);
+        let mut expr = Expr::<String, SqliteDialect>::raw("name").cast("TEXT");
+
+        expr.render(&mut writer).expect("render expression CAST");
+        let (sql, _args) = writer.finish();
+        assert_eq!(sql, "CAST(name AS TEXT)");
+    }
+
+    #[test]
     fn custom_prefix_operator_groups_its_operand() {
         use wormx::{Expr, SqlWriter, SqliteDialect};
 

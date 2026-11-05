@@ -143,7 +143,61 @@ pub enum ExprKind<D: Dialect> {
         operand: Box<Expr<(), D>>,
         window: Window<D>,
     },
+    /// A `CASE WHEN ... THEN ... ELSE ... END` expression.
+    Case {
+        branches: Vec<(Expr<(), D>, Expr<(), D>)>,
+        otherwise: Option<Box<Expr<(), D>>>,
+    },
+    /// A `CAST(operand AS to)` expression.
+    Cast {
+        operand: Box<Expr<(), D>>,
+        /// A SQL type name such as `"NVARCHAR(200)"`. It is written verbatim,
+        /// so it must be a constant, never user input.
+        to: &'static str,
+    },
     Custom(Box<dyn CustomNode<D>>),
+}
+
+/// A `CASE` expression under construction.
+///
+/// Start one with [`Expr::case`], add branches with [`Case::when`], and finish
+/// with either [`Case::otherwise`] or [`Case::end`].
+pub struct Case<T, D: Dialect> {
+    branches: Vec<(Expr<(), D>, Expr<(), D>)>,
+    _marker: PhantomData<fn() -> T>,
+}
+
+impl<T, D: Dialect> Case<T, D> {
+    /// Adds a `WHEN condition THEN value` branch.
+    pub fn when<C, V>(mut self, condition: C, value: V) -> Self
+    where
+        C: IntoExpr<bool, D>,
+        V: IntoExpr<T, D>,
+    {
+        self.branches
+            .push((condition.into_expr().erase(), value.into_expr().erase()));
+        self
+    }
+
+    /// Finishes the expression with `ELSE value`.
+    pub fn otherwise<V>(self, value: V) -> Expr<T, D>
+    where
+        V: IntoExpr<T, D>,
+    {
+        Expr::from_kind(ExprKind::Case {
+            branches: self.branches,
+            otherwise: Some(Box::new(value.into_expr().erase())),
+        })
+    }
+
+    /// Finishes the expression without an `ELSE`, producing `NULL` when no
+    /// branch matches.
+    pub fn end(self) -> Expr<Option<T>, D> {
+        Expr::from_kind(ExprKind::Case {
+            branches: self.branches,
+            otherwise: None,
+        })
+    }
 }
 
 /// A typed expression.
@@ -290,6 +344,31 @@ impl<T, D: Dialect> Expr<T, D> {
         Expr::from_kind(ExprKind::Count {
             operand: Box::new(self.erase()),
             distinct: true,
+        })
+    }
+
+    /// Starts a `CASE` expression.
+    ///
+    /// ```ignore
+    /// let flag = Expr::<i32, MssqlDialect>::case()
+    ///     .when(Users::fields().active().eq(true), 1)
+    ///     .otherwise(0);
+    /// ```
+    pub fn case() -> Case<T, D> {
+        Case {
+            branches: Vec::new(),
+            _marker: PhantomData,
+        }
+    }
+
+    /// Casts this expression to the SQL type named by `to`.
+    ///
+    /// `to` is written into the query verbatim, so it must be a constant such
+    /// as `"NVARCHAR(200)"` or `"DECIMAL(10, 2)"`. Never pass user input.
+    pub fn cast(self, to: &'static str) -> Self {
+        Self::from_kind(ExprKind::Cast {
+            operand: Box::new(self.erase()),
+            to,
         })
     }
 

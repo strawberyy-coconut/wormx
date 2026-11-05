@@ -11,6 +11,11 @@
 //! The root re-exports the same names as before, and the old module paths
 //! (`query`, `dml`, `join`, `dialect`, `metadata`, …) remain available as
 //! aliases for compatibility.
+//!
+//! Core stays deliberately conservative: an operation belongs here only when
+//! several database backends share it as a first-class concept. Dialect-specific
+//! spellings belong in a driver, behind a `SqlSyntax` hook, or in an expression
+//! built with `sql_function!` or `operator!`.
 
 pub mod config;
 pub mod exec;
@@ -25,7 +30,7 @@ pub use exec::{Db, RawQuery, Transaction};
 pub use plan::deferred::Deferred;
 pub use plan::dml::{Delete, Insert, Update, Upsert};
 pub use plan::expr::{
-    BindValue, ColumnExpr, ColumnRef, CustomNode, Expr, ExprKind, IntoExpr, LogicalOp, Order,
+    BindValue, Case, ColumnExpr, ColumnRef, CustomNode, Expr, ExprKind, IntoExpr, LogicalOp, Order,
     Window, coalesce, count_star, dense_rank, rank, row_number,
 };
 pub use plan::include::Include;
