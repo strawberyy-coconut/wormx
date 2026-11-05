@@ -1,3 +1,5 @@
+//! Relation values that track whether they have been loaded.
+
 use std::fmt;
 use std::ops::{Deref, DerefMut};
 
@@ -15,22 +17,26 @@ enum DeferredState<T> {
 }
 
 impl<T> Deferred<T> {
+    /// Creates an unloaded relation value.
     pub const fn unloaded() -> Self {
         Self {
             state: DeferredState::Unloaded,
         }
     }
 
+    /// Creates a loaded relation value.
     pub fn loaded(value: T) -> Self {
         Self {
             state: DeferredState::Loaded(Box::new(value)),
         }
     }
 
+    /// Returns whether a value has been loaded.
     pub fn is_loaded(&self) -> bool {
         matches!(self.state, DeferredState::Loaded(_))
     }
 
+    /// Returns the loaded value.
     pub fn get(&self) -> Option<&T> {
         match &self.state {
             DeferredState::Unloaded => None,
@@ -38,6 +44,7 @@ impl<T> Deferred<T> {
         }
     }
 
+    /// Returns the loaded value mutably.
     pub fn get_mut(&mut self) -> Option<&mut T> {
         match &mut self.state {
             DeferredState::Unloaded => None,
@@ -45,19 +52,23 @@ impl<T> Deferred<T> {
         }
     }
 
+    /// Marks the value as loaded.
     pub fn set(&mut self, value: T) {
         self.state = DeferredState::Loaded(Box::new(value));
     }
 
+    /// Marks the value as unloaded.
     pub fn clear(&mut self) {
         self.state = DeferredState::Unloaded;
     }
 
+    /// Returns the loaded value, panicking when unloaded.
     pub fn expect_loaded(&self) -> &T {
         self.get()
             .expect("relation is not loaded; use `.include(...)` or execute a relation query first")
     }
 
+    /// Returns the loaded value mutably, panicking when unloaded.
     pub fn expect_loaded_mut(&mut self) -> &mut T {
         self.get_mut()
             .expect("relation is not loaded; use `.include(...)` or execute a relation query first")

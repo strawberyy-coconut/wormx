@@ -1,8 +1,11 @@
+//! PostgreSQL support for wormx, built on `sqlx-postgres`.
+
 use wormx_core::{
     Capabilities, Dialect, SupportsArrays, SupportsFullTextSearch, SupportsJson, SupportsReturning,
     SupportsUpsert,
 };
 
+/// The PostgreSQL dialect marker.
 #[derive(Debug, Clone, Copy, Default)]
 pub struct PostgresDialect;
 
@@ -224,6 +227,7 @@ mod macros {
         })
     }
 
+    /// The compile-time table driver for this database.
     pub const POSTGRES: TableDriver = TableDriver::new_with_fns::<Postgres>(
         "::wormx::sqlx::Postgres",
         &["postgres", "postgresql"],

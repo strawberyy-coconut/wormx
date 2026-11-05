@@ -1,3 +1,5 @@
+//! Schema fetching, caching, type mapping, and code generation for wormx's `table!` macro.
+
 pub mod cache;
 pub mod constraints;
 pub mod driver;

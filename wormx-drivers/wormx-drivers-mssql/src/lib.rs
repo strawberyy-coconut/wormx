@@ -4,6 +4,7 @@ use wormx_core::{
     Capabilities, Dialect, SqlWriter, SupportsFullTextSearch, SupportsJson, SupportsUpsert,
 };
 
+/// The Microsoft SQL Server dialect marker.
 #[derive(Debug, Clone, Copy, Default)]
 pub struct MssqlDialect;
 
@@ -294,6 +295,7 @@ mod macros {
         Ok(grouped.into_values().collect())
     }
 
+    /// The compile-time table driver for this database.
     pub const MSSQL: TableDriver = TableDriver::new_with_fns::<Mssql>(
         "sqlx_mssql_rs::Mssql",
         &["mssql", "sqlserver", "sql-server"],

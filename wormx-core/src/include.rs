@@ -1,3 +1,5 @@
+//! Eager-loading steps applied after a base query.
+
 use std::future::Future;
 use std::pin::Pin;
 
@@ -15,9 +17,6 @@ pub trait Include<D: Dialect + Clone, T>: Send + Sync {
     ) -> Pin<Box<dyn Future<Output = Result<()>> + Send + 'a>>;
 
     /// Applies the include inside an open transaction.
-    ///
-    /// The default implementation falls back to the pool. Generated includes
-    /// override it so nested eager loads see uncommitted rows.
     fn apply_in<'a>(
         &'a self,
         db: &'a Db<D>,

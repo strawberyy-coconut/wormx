@@ -1,3 +1,5 @@
+//! Configuration loaded from `wormx.toml` and `sqlx.toml`.
+
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
@@ -15,6 +17,7 @@ pub struct WormxToml {
 
 #[derive(Debug, Clone, Default, Deserialize)]
 #[serde(default, rename_all = "kebab-case")]
+/// Shared settings that `wormx.toml` and `sqlx.toml` read.
 pub struct CommonToml {
     /// Environment variable that holds the database URL.
     pub database_url_var: Option<String>,
@@ -22,6 +25,7 @@ pub struct CommonToml {
 
 #[derive(Debug, Clone, Default, Deserialize)]
 #[serde(default, rename_all = "kebab-case")]
+/// Macro-specific configuration.
 pub struct MacrosToml {
     pub preferred_crates: PreferredCratesToml,
     pub type_overrides: BTreeMap<String, String>,
@@ -30,6 +34,7 @@ pub struct MacrosToml {
 
 #[derive(Debug, Clone, Default, Deserialize)]
 #[serde(default, rename_all = "kebab-case")]
+/// Preferred third-party crates for SQL types.
 pub struct PreferredCratesToml {
     pub date_time: Option<String>,
     pub numeric: Option<String>,
@@ -37,6 +42,7 @@ pub struct PreferredCratesToml {
 
 #[derive(Debug, Clone, Default, Deserialize)]
 #[serde(default, rename_all = "kebab-case")]
+/// The `[wormx]` section.
 pub struct WormxSectionToml {
     pub cache_dir: Option<String>,
     /// Force a dialect instead of inferring it from the URL scheme.
@@ -48,12 +54,14 @@ pub struct WormxSectionToml {
 
 #[derive(Debug, Clone, Default, Deserialize)]
 #[serde(default, rename_all = "kebab-case")]
+/// Database connection settings.
 pub struct DatabaseToml {
     pub url_var: Option<String>,
 }
 
 #[derive(Debug, Clone, Default, Deserialize)]
 #[serde(default, rename_all = "kebab-case")]
+/// Generated-code settings.
 pub struct CodegenToml {
     pub derives: Option<Vec<String>>,
     pub visibility: Option<String>,
@@ -62,6 +70,7 @@ pub struct CodegenToml {
 
 #[derive(Debug, Clone, Default, Deserialize)]
 #[serde(default, rename_all = "kebab-case")]
+/// Per-table code generation overrides.
 pub struct TableToml {
     #[serde(rename = "struct")]
     pub struct_name: Option<String>,
@@ -69,6 +78,7 @@ pub struct TableToml {
 }
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+/// The preferred crate for date/time types.
 pub enum PreferredDateTime {
     #[default]
     Inferred,
@@ -77,6 +87,7 @@ pub enum PreferredDateTime {
 }
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+/// The preferred crate for numeric types.
 pub enum PreferredNumeric {
     #[default]
     Inferred,
@@ -85,6 +96,7 @@ pub enum PreferredNumeric {
 }
 
 #[derive(Debug, Clone)]
+/// Resolved code generation settings.
 pub struct CodegenConfig {
     pub derives: Vec<String>,
     pub visibility: String,
@@ -102,6 +114,7 @@ impl Default for CodegenConfig {
 }
 
 #[derive(Debug, Clone, Default)]
+/// Resolved per-table settings.
 pub struct TableConfig {
     pub struct_name: Option<String>,
     pub rust_path: Option<String>,
@@ -306,6 +319,7 @@ fn parse_numeric(value: Option<&str>) -> Result<PreferredNumeric, ConfigError> {
 }
 
 #[derive(Debug, thiserror::Error)]
+/// Errors from loading wormx configuration.
 pub enum ConfigError {
     #[error("failed to read config file {path:?}")]
     Io {

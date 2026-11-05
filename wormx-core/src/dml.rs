@@ -1,8 +1,7 @@
-//! `INSERT`, `UPDATE`, `DELETE`, and `UPSERT` builders.
+//! Typed `INSERT`, `UPDATE`, `DELETE`, and `UPSERT` builders.
 //!
-//! A builder owns typed values and hands a plan to the dialect's operation
-//! renderer. Execution stays in sqlx: the builder only decides what command to
-//! run and on which executor.
+//! Each builder renders its command through the dialect's operation renderer
+//! and executes it on a SQLx pool or transaction.
 
 use std::marker::PhantomData;
 
@@ -65,6 +64,7 @@ impl<D: Dialect + Clone, T: Table> Insert<D, T> {
         self
     }
 
+    /// Executes the statement.
     pub async fn exec(mut self) -> Result<<D::DB as Database>::QueryResult>
     where
         <D::DB as Database>::Arguments: sqlx_core::arguments::IntoArguments<D::DB>,
@@ -76,6 +76,7 @@ impl<D: Dialect + Clone, T: Table> Insert<D, T> {
             .await
     }
 
+    /// Executes the statement inside a transaction.
     pub async fn exec_in(
         mut self,
         tx: &mut Transaction<'_, D>,
@@ -166,11 +167,13 @@ impl<D: Dialect + Clone, T: Table> Update<D, T> {
         self
     }
 
+    /// Adds a filter predicate.
     pub fn filter(mut self, filter: Expr<bool, D>) -> Self {
         self.filters.push(filter);
         self
     }
 
+    /// Executes the statement.
     pub async fn exec(mut self) -> Result<<D::DB as Database>::QueryResult>
     where
         <D::DB as Database>::Arguments: sqlx_core::arguments::IntoArguments<D::DB>,
@@ -182,6 +185,7 @@ impl<D: Dialect + Clone, T: Table> Update<D, T> {
             .await
     }
 
+    /// Executes the statement inside a transaction.
     pub async fn exec_in(
         mut self,
         tx: &mut Transaction<'_, D>,
@@ -196,6 +200,7 @@ impl<D: Dialect + Clone, T: Table> Update<D, T> {
             .await
     }
 
+    /// Executes the statement and returns the affected rows.
     pub async fn exec_returning(mut self) -> Result<Vec<T>>
     where
         T: Send + Unpin + for<'r> FromRow<'r, <D::DB as Database>::Row>,
@@ -208,6 +213,7 @@ impl<D: Dialect + Clone, T: Table> Update<D, T> {
             .await
     }
 
+    /// Executes the statement inside a transaction and returns the affected rows.
     pub async fn exec_returning_in(mut self, tx: &mut Transaction<'_, D>) -> Result<Vec<T>>
     where
         T: Send + Unpin + for<'r> FromRow<'r, <D::DB as Database>::Row>,
@@ -251,11 +257,13 @@ impl<D: Dialect + Clone, T: Table> Delete<D, T> {
         }
     }
 
+    /// Adds a filter predicate.
     pub fn filter(mut self, filter: Expr<bool, D>) -> Self {
         self.filters.push(filter);
         self
     }
 
+    /// Executes the statement.
     pub async fn exec(mut self) -> Result<<D::DB as Database>::QueryResult>
     where
         <D::DB as Database>::Arguments: sqlx_core::arguments::IntoArguments<D::DB>,
@@ -267,6 +275,7 @@ impl<D: Dialect + Clone, T: Table> Delete<D, T> {
             .await
     }
 
+    /// Executes the statement inside a transaction.
     pub async fn exec_in(
         mut self,
         tx: &mut Transaction<'_, D>,
@@ -281,6 +290,7 @@ impl<D: Dialect + Clone, T: Table> Delete<D, T> {
             .await
     }
 
+    /// Executes the statement and returns the affected rows.
     pub async fn exec_returning(mut self) -> Result<Vec<T>>
     where
         T: Send + Unpin + for<'r> FromRow<'r, <D::DB as Database>::Row>,
@@ -293,6 +303,7 @@ impl<D: Dialect + Clone, T: Table> Delete<D, T> {
             .await
     }
 
+    /// Executes the statement inside a transaction and returns the affected rows.
     pub async fn exec_returning_in(mut self, tx: &mut Transaction<'_, D>) -> Result<Vec<T>>
     where
         T: Send + Unpin + for<'r> FromRow<'r, <D::DB as Database>::Row>,
@@ -341,6 +352,7 @@ impl<D: Dialect + Clone, T: Table> Upsert<D, T> {
         }
     }
 
+    /// Sets a column value.
     pub fn value<C, V>(mut self, column: Column<C>, value: V) -> Self
     where
         C: 'static,
@@ -368,6 +380,7 @@ impl<D: Dialect + Clone, T: Table> Upsert<D, T> {
         self
     }
 
+    /// Executes the statement.
     pub async fn exec(mut self) -> Result<<D::DB as Database>::QueryResult>
     where
         <D::DB as Database>::Arguments: sqlx_core::arguments::IntoArguments<D::DB>,
@@ -379,6 +392,7 @@ impl<D: Dialect + Clone, T: Table> Upsert<D, T> {
             .await
     }
 
+    /// Executes the statement inside a transaction.
     pub async fn exec_in(
         mut self,
         tx: &mut Transaction<'_, D>,
@@ -393,6 +407,7 @@ impl<D: Dialect + Clone, T: Table> Upsert<D, T> {
             .await
     }
 
+    /// Executes the statement and returns the affected row.
     pub async fn exec_returning(mut self) -> Result<T>
     where
         T: Send + Unpin + for<'r> FromRow<'r, <D::DB as Database>::Row>,

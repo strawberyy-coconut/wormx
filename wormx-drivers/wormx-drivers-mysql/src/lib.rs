@@ -1,5 +1,8 @@
+//! MySQL support for wormx, built on `sqlx-mysql`.
+
 use wormx_core::{Capabilities, Dialect, SupportsFullTextSearch, SupportsJson, SupportsUpsert};
 
+/// The MySQL dialect marker.
 #[derive(Debug, Clone, Copy, Default)]
 pub struct MySqlDialect;
 
@@ -237,6 +240,7 @@ mod macros {
         })
     }
 
+    /// The compile-time table driver for this database.
     pub const MYSQL: TableDriver = TableDriver::new_with_fns::<MySql>(
         "::wormx::sqlx::MySql",
         &["mysql", "mariadb"],

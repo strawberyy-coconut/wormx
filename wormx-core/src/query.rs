@@ -1,3 +1,5 @@
+//! Typed query builders, projections, and operation renderers.
+
 use std::marker::PhantomData;
 
 use sqlx_core::database::Database;
@@ -21,6 +23,7 @@ pub struct Query<T> {
 }
 
 impl<T> Query<T> {
+    /// Creates an empty table query.
     pub const fn new() -> Self {
         Self {
             _marker: PhantomData,
@@ -56,6 +59,7 @@ pub struct Filtered<D: Dialect + Clone, T: Table + 'static> {
 }
 
 impl<D: Dialect + Clone, T: Table + 'static> Filtered<D, T> {
+    /// Creates a filtered table query.
     pub fn new(filter: Expr<bool, D>) -> Self {
         Self {
             filter,
@@ -73,9 +77,6 @@ impl<D: Dialect + Clone, T: Table + 'static> IntoSelect<D> for Filtered<D, T> {
 }
 
 /// Writes the SQL for a projection.
-///
-/// This is separate from [`Projection`] so a renderer can write a projection
-/// without knowing how result rows are mapped back into Rust values.
 pub trait ProjectionWriter<D: Dialect>: Send {
     fn write(&mut self, writer: &mut SqlWriter<'_, D>) -> Result<()>;
 }
@@ -226,6 +227,7 @@ pub struct Cte<D: Dialect> {
 }
 
 impl<D: Dialect> Cte<D> {
+    /// Creates a common table expression.
     pub fn new(name: impl Into<String>, query: impl Subquery<D> + 'static) -> Self {
         Self {
             name: name.into(),
@@ -233,6 +235,7 @@ impl<D: Dialect> Cte<D> {
         }
     }
 
+    /// Writes the CTE into the query.
     pub fn render(&mut self, writer: &mut SqlWriter<'_, D>) -> Result<()> {
         writer.push_ident(&self.name);
         writer.push(" AS (");
@@ -268,11 +271,13 @@ where
     T: Table + 'static,
     P: Projection<D>,
 {
+    /// Adds a filter predicate.
     pub fn filter(mut self, filter: Expr<bool, D>) -> Self {
         self.filters.push(filter);
         self
     }
 
+    /// Selects distinct rows.
     pub fn distinct(mut self) -> Self {
         self.distinct = true;
         self
@@ -284,11 +289,13 @@ where
         self
     }
 
+    /// Adds a join.
     pub fn join(mut self, join: Join<D>) -> Self {
         self.joins.push(join);
         self
     }
 
+    /// Adds a grouping expression.
     pub fn group_by<E, V>(mut self, expression: V) -> Self
     where
         V: IntoExpr<E, D>,
@@ -297,26 +304,31 @@ where
         self
     }
 
+    /// Adds a `HAVING` predicate.
     pub fn having(mut self, filter: Expr<bool, D>) -> Self {
         self.having.push(filter);
         self
     }
 
+    /// Adds an order term.
     pub fn order_by(mut self, order: Order<D>) -> Self {
         self.orders.push(order);
         self
     }
 
+    /// Sets the maximum number of rows.
     pub fn limit(mut self, limit: u64) -> Self {
         self.limit = Some(limit);
         self
     }
 
+    /// Skips the given number of rows.
     pub fn offset(mut self, offset: u64) -> Self {
         self.offset = Some(offset);
         self
     }
 
+    /// Executes the query and returns the first row.
     pub async fn first(mut self) -> Result<Option<P::Output>>
     where
         P::Row: for<'r> FromRow<'r, <D::DB as Database>::Row>,
@@ -328,6 +340,7 @@ where
         Ok(rows.pop())
     }
 
+    /// Executes the query.
     pub async fn exec(mut self) -> Result<Vec<P::Output>>
     where
         P::Row: for<'r> FromRow<'r, <D::DB as Database>::Row>,
@@ -361,6 +374,7 @@ where
         Ok(rows.into_iter().map(P::map).collect())
     }
 
+    /// Executes the query inside a transaction.
     pub async fn exec_in(mut self, tx: &mut crate::db::Transaction<'_, D>) -> Result<Vec<P::Output>>
     where
         P::Row: for<'r> FromRow<'r, <D::DB as Database>::Row>,
@@ -744,7 +758,7 @@ impl<D: Dialect> DeleteRenderer<D> for SqlDelete {
 
 /// The generic SQL `UPSERT` renderer.
 ///
-/// Renders the widely supported `ON CONFLICT` form.
+/// Renders `INSERT ... ON CONFLICT ... DO UPDATE`.
 #[derive(Debug, Clone, Copy, Default)]
 pub struct SqlUpsert;
 
@@ -1008,6 +1022,7 @@ impl<T> Column<T> {
         Expr::aliased_column(self.schema, self.table, self.alias, self.column)
     }
 
+    /// Compares the column with `value` using `=`.
     pub fn eq<D, V>(self, value: V) -> Expr<bool, D>
     where
         D: Dialect,
@@ -1017,6 +1032,7 @@ impl<T> Column<T> {
         self.expr::<D>().eq(value)
     }
 
+    /// Compares the column with `value` using `<>`.
     pub fn ne<D, V>(self, value: V) -> Expr<bool, D>
     where
         D: Dialect,
@@ -1026,6 +1042,7 @@ impl<T> Column<T> {
         self.expr::<D>().ne(value)
     }
 
+    /// Compares the column with `value` using `>`.
     pub fn gt<D, V>(self, value: V) -> Expr<bool, D>
     where
         D: Dialect,
@@ -1035,6 +1052,7 @@ impl<T> Column<T> {
         self.expr::<D>().gt(value)
     }
 
+    /// Compares the column with `value` using `>=`.
     pub fn ge<D, V>(self, value: V) -> Expr<bool, D>
     where
         D: Dialect,
@@ -1044,6 +1062,7 @@ impl<T> Column<T> {
         self.expr::<D>().ge(value)
     }
 
+    /// Compares the column with `value` using `<`.
     pub fn lt<D, V>(self, value: V) -> Expr<bool, D>
     where
         D: Dialect,
@@ -1053,6 +1072,7 @@ impl<T> Column<T> {
         self.expr::<D>().lt(value)
     }
 
+    /// Compares the column with `value` using `<=`.
     pub fn le<D, V>(self, value: V) -> Expr<bool, D>
     where
         D: Dialect,
@@ -1062,6 +1082,7 @@ impl<T> Column<T> {
         self.expr::<D>().le(value)
     }
 
+    /// Matches the column against a `LIKE` pattern.
     pub fn like<D, V>(self, pattern: V) -> Expr<bool, D>
     where
         D: Dialect,
@@ -1071,6 +1092,7 @@ impl<T> Column<T> {
         self.expr::<D>().like(pattern)
     }
 
+    /// Tests whether the column is `NULL`.
     pub fn is_null<D: Dialect>(self) -> Expr<bool, D>
     where
         T: 'static,
@@ -1078,6 +1100,7 @@ impl<T> Column<T> {
         self.expr::<D>().is_null()
     }
 
+    /// Tests whether the column is not `NULL`.
     pub fn is_not_null<D: Dialect>(self) -> Expr<bool, D>
     where
         T: 'static,
@@ -1085,6 +1108,7 @@ impl<T> Column<T> {
         self.expr::<D>().is_not_null()
     }
 
+    /// Tests whether the column is in a list of values.
     pub fn in_list<D, V, I>(self, values: I) -> Expr<bool, D>
     where
         D: Dialect,
@@ -1095,6 +1119,7 @@ impl<T> Column<T> {
         self.expr::<D>().in_list(values)
     }
 
+    /// Tests whether the column is not in a list of values.
     pub fn not_in_list<D, V, I>(self, values: I) -> Expr<bool, D>
     where
         D: Dialect,
@@ -1119,6 +1144,7 @@ impl<T> Column<T> {
         writer.push_ident(self.column);
     }
 
+    /// Tests whether the column is in a subquery result.
     pub fn in_query<D, S>(self, subquery: S) -> Expr<bool, D>
     where
         D: Dialect,
@@ -1128,6 +1154,7 @@ impl<T> Column<T> {
         Expr::<T, D>::in_subquery(self.expr::<D>(), subquery, false)
     }
 
+    /// Tests whether the column is not in a subquery result.
     pub fn not_in_query<D, S>(self, subquery: S) -> Expr<bool, D>
     where
         D: Dialect,
@@ -1137,6 +1164,7 @@ impl<T> Column<T> {
         Expr::<T, D>::in_subquery(self.expr::<D>(), subquery, true)
     }
 
+    /// Counts the column values.
     pub fn count<D: Dialect>(self) -> Expr<i64, D>
     where
         T: 'static,
@@ -1144,6 +1172,7 @@ impl<T> Column<T> {
         self.expr::<D>().count()
     }
 
+    /// Counts distinct column values.
     pub fn count_distinct<D: Dialect>(self) -> Expr<i64, D>
     where
         T: 'static,
@@ -1151,6 +1180,7 @@ impl<T> Column<T> {
         self.expr::<D>().count_distinct()
     }
 
+    /// Orders by the column ascending.
     pub fn asc<D: Dialect>(self) -> Order<D>
     where
         T: 'static,
@@ -1158,6 +1188,7 @@ impl<T> Column<T> {
         self.expr::<D>().into_order(false)
     }
 
+    /// Orders by the column descending.
     pub fn desc<D: Dialect>(self) -> Order<D>
     where
         T: 'static,
@@ -1194,11 +1225,13 @@ impl<D: Dialect + Clone, T: Table + 'static> Select<D, T> {
         }
     }
 
+    /// Adds a filter predicate.
     pub fn filter(mut self, filter: Expr<bool, D>) -> Self {
         self.filters.push(filter);
         self
     }
 
+    /// Selects distinct rows.
     pub fn distinct(mut self) -> Self {
         self.distinct = true;
         self
@@ -1210,26 +1243,31 @@ impl<D: Dialect + Clone, T: Table + 'static> Select<D, T> {
         self
     }
 
+    /// Adds a join.
     pub fn join(mut self, join: Join<D>) -> Self {
         self.joins.push(join);
         self
     }
 
+    /// Adds an order term.
     pub fn order_by(mut self, order: Order<D>) -> Self {
         self.orders.push(order);
         self
     }
 
+    /// Sets the maximum number of rows.
     pub fn limit(mut self, limit: u64) -> Self {
         self.limit = Some(limit);
         self
     }
 
+    /// Skips the given number of rows.
     pub fn offset(mut self, offset: u64) -> Self {
         self.offset = Some(offset);
         self
     }
 
+    /// Projects the query into a typed result shape.
     pub fn select<P>(self, projection: P) -> ProjectedSelect<D, T, P>
     where
         P: Projection<D>,
@@ -1250,6 +1288,7 @@ impl<D: Dialect + Clone, T: Table + 'static> Select<D, T> {
         }
     }
 
+    /// Adds an eager-loading step.
     pub fn include<I>(mut self, include: I) -> Self
     where
         I: Include<D, T> + 'static,
@@ -1258,6 +1297,7 @@ impl<D: Dialect + Clone, T: Table + 'static> Select<D, T> {
         self
     }
 
+    /// Executes the query.
     pub async fn exec(mut self) -> Result<Vec<T>>
     where
         T: Table + Send + Unpin + for<'r> FromRow<'r, <D::DB as Database>::Row>,
@@ -1297,6 +1337,7 @@ impl<D: Dialect + Clone, T: Table + 'static> Select<D, T> {
         Ok(rows)
     }
 
+    /// Executes the query inside a transaction.
     pub async fn exec_in(mut self, tx: &mut crate::db::Transaction<'_, D>) -> Result<Vec<T>>
     where
         T: Table + Send + Unpin + for<'r> FromRow<'r, <D::DB as Database>::Row>,
@@ -1336,6 +1377,7 @@ impl<D: Dialect + Clone, T: Table + 'static> Select<D, T> {
         Ok(rows)
     }
 
+    /// Executes `SELECT COUNT(*)`.
     pub async fn count(mut self) -> Result<u64>
     where
         T: Table,
@@ -1365,6 +1407,7 @@ impl<D: Dialect + Clone, T: Table + 'static> Select<D, T> {
         Ok(count as u64)
     }
 
+    /// Executes the query and returns the first row.
     pub async fn first(mut self) -> Result<Option<T>>
     where
         T: Table + Send + Unpin + for<'r> FromRow<'r, <D::DB as Database>::Row>,

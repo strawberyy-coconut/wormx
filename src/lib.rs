@@ -1,9 +1,10 @@
 //! Typed table generation and query building for sqlx.
 //!
-//! wormx sits on top of SQLx: SQLx owns connections, execution, transactions,
-//! and migrations. wormx owns compile-time table introspection and the typed
-//! query DSL. Use `sqlx migrate` / `sqlx-cli` (or embedded SQLx migrations) to
-//! create and evolve the schema before building.
+//! wormx provides compile-time table introspection and a typed query DSL over
+//! SQLx pools. `wormx::table!` reads the migrated schema and generates row
+//! types, table metadata, and relation accessors. Use SQLx migrations
+//! (`sqlx migrate`, `sqlx-cli`, or `sqlx::migrate!`) to create and evolve the
+//! schema before building.
 
 pub use sqlx;
 pub use wormx_core::{

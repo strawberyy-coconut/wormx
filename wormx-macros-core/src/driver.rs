@@ -38,10 +38,11 @@ pub struct TableDriver {
 }
 
 impl TableDriver {
-    /// Creates a driver with caller-supplied describe and constraint functions.
+    /// Creates a driver from describe and constraint functions.
     ///
-    /// This is the extension point for driver crates. The describe function receives the table
-    /// reference and database URL, and returns the serialized `Describe` metadata.
+    /// The describe function receives the table reference and database URL and
+    /// returns serialized `Describe` metadata. The constraint function reads
+    /// primary keys, defaults, identity/generated columns, and foreign keys.
     pub const fn new_with_fns<DB>(
         db_path: &'static str,
         aliases: &'static [&'static str],

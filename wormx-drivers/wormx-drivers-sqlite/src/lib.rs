@@ -1,7 +1,10 @@
+//! SQLite support for wormx, built on `sqlx-sqlite`.
+
 use wormx_core::{
     Capabilities, Dialect, SupportsFullTextSearch, SupportsJson, SupportsReturning, SupportsUpsert,
 };
 
+/// The SQLite dialect marker.
 #[derive(Debug, Clone, Copy, Default)]
 pub struct SqliteDialect;
 
@@ -282,6 +285,7 @@ mod macros {
         Ok(result)
     }
 
+    /// The compile-time table driver for this database.
     pub const SQLITE: TableDriver = TableDriver::new_with_fns::<Sqlite>(
         "::wormx::sqlx::Sqlite",
         &["sqlite", "turso"],

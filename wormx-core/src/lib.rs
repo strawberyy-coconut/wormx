@@ -1,3 +1,5 @@
+//! Core runtime, SQL dialect traits, and the typed query DSL for wormx.
+
 pub mod config;
 pub mod db;
 pub mod deferred;

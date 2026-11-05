@@ -1,3 +1,5 @@
+//! The `wormx::table!` procedural macro.
+
 use proc_macro::TokenStream;
 use syn::parse_macro_input;
 use wormx_macros_core::{TableDriver, expand_table};

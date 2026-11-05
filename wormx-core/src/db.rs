@@ -1,3 +1,5 @@
+//! Database handles, raw SQL queries, and transactions.
+
 use sqlx_core::arguments::Arguments;
 use sqlx_core::database::Database;
 use sqlx_core::encode::Encode;
@@ -17,7 +19,7 @@ use crate::query::{IntoSelect, Select};
 
 /// A database handle that pairs a SQLx pool with a wormx dialect.
 ///
-/// The dialect is a zero-sized driver marker in most cases, so cloning a `Db` is cheap.
+/// Cloning a `Db` shares the pool and clones the dialect.
 pub struct Db<D: Dialect + Clone> {
     pool: Pool<D::DB>,
     dialect: D,
@@ -33,14 +35,17 @@ impl<D: Dialect + Clone> Clone for Db<D> {
 }
 
 impl<D: Dialect + Clone> Db<D> {
+    /// Creates a database handle from a SQLx pool and dialect.
     pub fn new(pool: Pool<D::DB>, dialect: D) -> Self {
         Self { pool, dialect }
     }
 
+    /// Returns the underlying SQLx pool.
     pub fn pool(&self) -> &Pool<D::DB> {
         &self.pool
     }
 
+    /// Returns the dialect.
     pub fn dialect(&self) -> &D {
         &self.dialect
     }
@@ -103,6 +108,7 @@ pub struct Transaction<'a, D: Dialect + Clone> {
 }
 
 impl<'a, D: Dialect + Clone> Transaction<'a, D> {
+    /// Returns the database handle.
     pub fn db(&self) -> &Db<D> {
         self.db
     }
@@ -117,6 +123,7 @@ impl<'a, D: Dialect + Clone> Transaction<'a, D> {
         &mut self.inner
     }
 
+    /// Starts a typed query.
     pub fn query<Q>(&self, source: Q) -> Select<D, Q::Table>
     where
         Q: IntoSelect<D>,
@@ -124,30 +131,37 @@ impl<'a, D: Dialect + Clone> Transaction<'a, D> {
         self.db.query(source)
     }
 
+    /// Starts an `INSERT`.
     pub fn insert<T: crate::metadata::Table>(&self) -> Insert<D, T> {
         Insert::new(self.db.clone())
     }
 
+    /// Starts an `UPDATE`.
     pub fn update<T: crate::metadata::Table>(&self) -> Update<D, T> {
         Update::new(self.db.clone())
     }
 
+    /// Starts a `DELETE`.
     pub fn delete<T: crate::metadata::Table>(&self) -> Delete<D, T> {
         Delete::new(self.db.clone())
     }
 
+    /// Starts an upsert.
     pub fn upsert<T: crate::metadata::Table>(&self) -> Upsert<D, T> {
         Upsert::new(self.db.clone())
     }
 
+    /// Starts a raw SQL query.
     pub fn sql(&self, sql: impl Into<String>) -> RawQuery<'_, D> {
         self.db.sql(sql)
     }
 
+    /// Commits the transaction.
     pub async fn commit(self) -> Result<()> {
         self.inner.commit().await
     }
 
+    /// Rolls back the transaction.
     pub async fn rollback(self) -> Result<()> {
         self.inner.rollback().await
     }
@@ -162,6 +176,7 @@ pub struct RawQuery<'a, D: Dialect + Clone> {
 }
 
 impl<D: Dialect + Clone> RawQuery<'_, D> {
+    /// Binds one argument.
     pub fn bind<T>(mut self, value: T) -> Self
     where
         T: for<'q> Encode<'q, D::DB> + Type<D::DB>,
@@ -174,6 +189,7 @@ impl<D: Dialect + Clone> RawQuery<'_, D> {
         self
     }
 
+    /// Fetches all rows.
     pub async fn fetch_all<T>(mut self) -> Result<Vec<T>>
     where
         T: Send + Unpin + for<'r> FromRow<'r, <D::DB as Database>::Row>,
@@ -186,6 +202,7 @@ impl<D: Dialect + Clone> RawQuery<'_, D> {
             .await
     }
 
+    /// Fetches exactly one row.
     pub async fn fetch_one<T>(mut self) -> Result<T>
     where
         T: Send + Unpin + for<'r> FromRow<'r, <D::DB as Database>::Row>,
@@ -198,6 +215,7 @@ impl<D: Dialect + Clone> RawQuery<'_, D> {
             .await
     }
 
+    /// Fetches zero or one row.
     pub async fn fetch_optional<T>(mut self) -> Result<Option<T>>
     where
         T: Send + Unpin + for<'r> FromRow<'r, <D::DB as Database>::Row>,
@@ -210,6 +228,7 @@ impl<D: Dialect + Clone> RawQuery<'_, D> {
             .await
     }
 
+    /// Executes the statement.
     pub async fn execute(mut self) -> Result<<D::DB as Database>::QueryResult>
     where
         <D::DB as Database>::Arguments: sqlx_core::arguments::IntoArguments<D::DB>,

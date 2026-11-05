@@ -1,3 +1,5 @@
+//! Identifier-to-Rust naming helpers.
+
 use heck::{ToSnakeCase, ToUpperCamelCase};
 
 /// Rust keywords that can be used as raw identifiers.

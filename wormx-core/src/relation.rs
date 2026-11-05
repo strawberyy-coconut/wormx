@@ -1,3 +1,5 @@
+//! Lazy belongs-to and has-many relation handles.
+
 use std::marker::PhantomData;
 
 use sqlx_core::database::Database;
@@ -22,6 +24,7 @@ pub struct BelongsTo<T: Table, K> {
 }
 
 impl<T: Table + 'static, K> BelongsTo<T, K> {
+    /// Creates a relation from a non-null foreign key.
     pub const fn new(key: K) -> Self {
         Self {
             key: Some(key),
@@ -29,6 +32,7 @@ impl<T: Table + 'static, K> BelongsTo<T, K> {
         }
     }
 
+    /// Creates a relation from a nullable foreign key.
     pub const fn optional(key: Option<K>) -> Self {
         Self {
             key,
@@ -36,10 +40,12 @@ impl<T: Table + 'static, K> BelongsTo<T, K> {
         }
     }
 
+    /// Returns the relation key.
     pub fn key(&self) -> Option<&K> {
         self.key.as_ref()
     }
 
+    /// Loads the related row.
     pub async fn first<D>(self, db: &Db<D>) -> Result<Option<T>>
     where
         D: Dialect + Clone,
@@ -84,6 +90,7 @@ pub struct HasMany<T: Table, K> {
 }
 
 impl<T: Table + 'static, K> HasMany<T, K> {
+    /// Creates a has-many relation.
     pub const fn new(key: K, foreign_key: &'static str) -> Self {
         Self {
             key,
@@ -92,6 +99,7 @@ impl<T: Table + 'static, K> HasMany<T, K> {
         }
     }
 
+    /// Loads the related rows.
     pub async fn exec<D>(self, db: &Db<D>) -> Result<Vec<T>>
     where
         D: Dialect + Clone,
@@ -132,6 +140,7 @@ pub struct HasManyRef<'a, T: Table, K> {
 }
 
 impl<'a, T: Table + 'static, K> HasManyRef<'a, T, K> {
+    /// Creates a borrowed has-many relation view.
     pub const fn new(key: K, foreign_key: &'static str, deferred: &'a Deferred<Vec<T>>) -> Self {
         Self {
             key,
@@ -140,18 +149,22 @@ impl<'a, T: Table + 'static, K> HasManyRef<'a, T, K> {
         }
     }
 
+    /// Returns the loaded rows.
     pub fn loaded(self) -> Option<&'a Vec<T>> {
         self.deferred.get()
     }
 
+    /// Returns the loaded rows, panicking when unloaded.
     pub fn expect_loaded(self) -> &'a Vec<T> {
         self.deferred.expect_loaded()
     }
 
+    /// Returns whether the relation has been loaded.
     pub fn is_loaded(&self) -> bool {
         self.deferred.is_loaded()
     }
 
+    /// Returns the deferred value.
     pub fn deferred(self) -> &'a Deferred<Vec<T>> {
         self.deferred
     }
@@ -161,6 +174,7 @@ impl<'a, T, K> HasManyRef<'a, T, K>
 where
     T: Table + 'static,
 {
+    /// Loads the related rows.
     pub async fn exec<D>(&self, db: &Db<D>) -> Result<Vec<T>>
     where
         D: Dialect + Clone,
@@ -196,22 +210,27 @@ pub struct BelongsToRef<'a, T: Table, K> {
 }
 
 impl<'a, T: Table + 'static, K> BelongsToRef<'a, T, K> {
+    /// Creates a borrowed belongs-to relation view.
     pub const fn new(key: K, deferred: &'a Deferred<T>) -> Self {
         Self { key, deferred }
     }
 
+    /// Returns the loaded row.
     pub fn loaded(self) -> Option<&'a T> {
         self.deferred.get()
     }
 
+    /// Returns the loaded row, panicking when unloaded or null.
     pub fn expect_loaded(self) -> &'a T {
         self.deferred.expect_loaded()
     }
 
+    /// Returns whether the relation has been loaded.
     pub fn is_loaded(&self) -> bool {
         self.deferred.is_loaded()
     }
 
+    /// Returns the deferred value.
     pub fn deferred(self) -> &'a Deferred<T> {
         self.deferred
     }
@@ -221,6 +240,7 @@ impl<'a, T, K> BelongsToRef<'a, T, K>
 where
     T: Table + 'static,
 {
+    /// Loads the related row.
     pub async fn first<D>(&self, db: &Db<D>) -> Result<Option<T>>
     where
         D: Dialect + Clone,
@@ -256,23 +276,28 @@ pub struct OptionalBelongsToRef<'a, T: Table, K> {
 }
 
 impl<'a, T: Table + 'static, K> OptionalBelongsToRef<'a, T, K> {
+    /// Creates a borrowed nullable belongs-to relation view.
     pub const fn new(key: Option<K>, deferred: &'a Deferred<Option<T>>) -> Self {
         Self { key, deferred }
     }
 
+    /// Returns the loaded row.
     pub fn loaded(self) -> Option<&'a T> {
         self.deferred.get().and_then(Option::as_ref)
     }
 
+    /// Returns the loaded row, panicking when unloaded or null.
     pub fn expect_loaded(self) -> &'a T {
         self.loaded()
             .expect("relation is not loaded or is null; use `.include(...)` first")
     }
 
+    /// Returns whether the relation has been loaded.
     pub fn is_loaded(&self) -> bool {
         self.deferred.is_loaded()
     }
 
+    /// Returns the deferred value.
     pub fn deferred(self) -> &'a Deferred<Option<T>> {
         self.deferred
     }
@@ -282,6 +307,7 @@ impl<'a, T, K> OptionalBelongsToRef<'a, T, K>
 where
     T: Table + 'static,
 {
+    /// Loads the related row.
     pub async fn first<D>(&self, db: &Db<D>) -> Result<Option<T>>
     where
         D: Dialect + Clone,

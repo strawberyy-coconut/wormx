@@ -1,3 +1,5 @@
+//! Typed SQL joins and join sources.
+
 use sqlx_core::error::Result;
 
 use crate::dialect::{Dialect, Expr, SqlWriter};
@@ -12,16 +14,22 @@ pub struct TableSource {
 }
 
 impl TableSource {
+    /// Creates a table source with an optional alias.
     pub const fn new(def: &'static TableDef, alias: Option<&'static str>) -> Self {
         Self { def, alias }
     }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+/// The SQL join kind.
 pub enum JoinKind {
+    /// `INNER JOIN`
     Inner,
+    /// `LEFT JOIN`
     Left,
+    /// `RIGHT JOIN`
     Right,
+    /// `FULL JOIN`
     Full,
 }
 

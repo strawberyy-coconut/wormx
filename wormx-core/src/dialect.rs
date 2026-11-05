@@ -1,3 +1,5 @@
+//! SQL dialect traits, expressions, functions, operators, and the SQL writer.
+
 use std::marker::PhantomData;
 
 use sqlx_core::arguments::Arguments;
@@ -13,21 +15,34 @@ use crate::query::{
 /// Optional SQL features a dialect can provide.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Capabilities {
+    /// Supports `SELECT` queries.
     pub select: bool,
+    /// Supports `JOIN` clauses.
     pub joins: bool,
+    /// Supports `GROUP BY`.
     pub group_by: bool,
+    /// Supports aggregate functions.
     pub aggregates: bool,
+    /// Supports subqueries.
     pub subqueries: bool,
+    /// Supports `SELECT *`.
     pub scan: bool,
+    /// Supports `RETURNING`.
     pub returning: bool,
+    /// Supports full-text search predicates.
     pub full_text_search: bool,
+    /// Supports JSON values and functions.
     pub json: bool,
+    /// Supports array values.
     pub arrays: bool,
+    /// Supports `UPSERT`/`ON CONFLICT`.
     pub upsert: bool,
+    /// Supports generated columns.
     pub generated_columns: bool,
 }
 
 impl Capabilities {
+    /// A capability set with every feature disabled.
     pub const NONE: Self = Self {
         select: false,
         joins: false,
@@ -43,6 +58,7 @@ impl Capabilities {
         generated_columns: false,
     };
 
+    /// A capability set with every feature enabled.
     pub const ALL: Self = Self {
         select: true,
         joins: true,
@@ -61,10 +77,8 @@ impl Capabilities {
 
 /// A backend dialect.
 ///
-/// The dialect owns the capability set, chooses the renderer for each logical
-/// operation, and exposes the SQL syntax hooks used by the generic renderers.
-/// A SQL driver overrides only the parts that differ, while a non-SQL dialect
-/// can ignore the SQL hooks.
+/// The dialect defines its capabilities, renderers for each operation, and the
+/// SQL syntax hooks used by the generic renderers.
 pub trait Dialect: 'static + Sized + Send + Sync + Clone {
     type DB: Database;
 
@@ -279,10 +293,15 @@ pub trait Dialect: 'static + Sized + Send + Sync + Clone {
     }
 }
 
+/// Marks a dialect that supports `RETURNING`.
 pub trait SupportsReturning: Dialect {}
+/// Marks a dialect that supports full-text search.
 pub trait SupportsFullTextSearch: Dialect {}
+/// Marks a dialect that supports JSON values.
 pub trait SupportsJson: Dialect {}
+/// Marks a dialect that supports array values.
 pub trait SupportsArrays: Dialect {}
+/// Marks a dialect that supports upserts.
 pub trait SupportsUpsert: Dialect {}
 
 /// Rust types that can be treated as textual SQL expressions.
@@ -823,6 +842,7 @@ impl<T, D: Dialect> RenderExpr<D> for Expr<T, D> {
     }
 }
 
+/// A qualified column reference.
 pub struct ColumnExpr {
     schema: Option<String>,
     table: String,
@@ -853,6 +873,7 @@ impl<D: Dialect> FunctionArgs<D> for ColumnExpr {
     }
 }
 
+/// A bound value placeholder.
 pub struct BindExpr<T> {
     value: T,
 }
@@ -866,6 +887,7 @@ where
     }
 }
 
+/// A negated expression.
 pub struct NotExpr<D: Dialect> {
     operand: Box<dyn RenderExpr<D>>,
 }
@@ -879,6 +901,7 @@ impl<D: Dialect> RenderExpr<D> for NotExpr<D> {
     }
 }
 
+/// A logical `AND`/`OR` expression.
 pub struct LogicalExpr<D: Dialect> {
     left: Box<dyn RenderExpr<D>>,
     operator: &'static str,
@@ -902,6 +925,7 @@ impl<D: Dialect> RenderExpr<D> for LogicalExpr<D> {
     }
 }
 
+/// A `COUNT` expression.
 pub struct CountExpr<D: Dialect> {
     operand: Box<dyn RenderExpr<D>>,
     distinct: bool,
@@ -926,6 +950,7 @@ pub fn count_star<D: Dialect>() -> Expr<i64, D> {
     })
 }
 
+/// A prefix operator expression.
 pub struct PrefixExpr<D: Dialect> {
     operator: &'static str,
     operand: Box<dyn RenderExpr<D>>,
@@ -939,6 +964,7 @@ impl<D: Dialect> RenderExpr<D> for PrefixExpr<D> {
     }
 }
 
+/// A postfix operator expression.
 pub struct PostfixExpr<D: Dialect> {
     operand: Box<dyn RenderExpr<D>>,
     operator: &'static str,
@@ -953,6 +979,7 @@ impl<D: Dialect> RenderExpr<D> for PostfixExpr<D> {
     }
 }
 
+/// A SQL function call.
 pub struct FunctionCallExpr<D: Dialect> {
     name: &'static str,
     args: Vec<Expr<(), D>>,
@@ -972,6 +999,7 @@ impl<D: Dialect> RenderExpr<D> for FunctionCallExpr<D> {
     }
 }
 
+/// A binary operator expression.
 pub struct BinaryExpr<D: Dialect> {
     left: Box<dyn RenderExpr<D>>,
     operator: &'static str,
@@ -986,6 +1014,7 @@ impl<D: Dialect> RenderExpr<D> for BinaryExpr<D> {
     }
 }
 
+/// An `IS NULL`/`IS NOT NULL` expression.
 pub struct IsNullExpr<D: Dialect> {
     operand: Box<dyn RenderExpr<D>>,
     negated: bool,
@@ -999,6 +1028,7 @@ impl<D: Dialect> RenderExpr<D> for IsNullExpr<D> {
     }
 }
 
+/// An `IN (subquery)` expression.
 pub struct InSubqueryExpr<D: Dialect> {
     left: Box<dyn RenderExpr<D>>,
     subquery: Box<dyn crate::query::Subquery<D>>,
@@ -1015,6 +1045,7 @@ impl<D: Dialect> RenderExpr<D> for InSubqueryExpr<D> {
     }
 }
 
+/// An `IN (...)` expression.
 pub struct InListExpr<D: Dialect> {
     left: Box<dyn RenderExpr<D>>,
     operands: Vec<Box<dyn RenderExpr<D>>>,
@@ -1036,6 +1067,7 @@ impl<D: Dialect> RenderExpr<D> for InListExpr<D> {
     }
 }
 
+/// A literal boolean expression.
 pub struct LiteralBoolExpr {
     value: bool,
 }
@@ -1047,6 +1079,7 @@ impl<D: Dialect> RenderExpr<D> for LiteralBoolExpr {
     }
 }
 
+/// A raw SQL fragment.
 pub struct RawExpr {
     sql: String,
 }
@@ -1299,6 +1332,7 @@ where
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+/// Where an operator is placed relative to its operands.
 pub enum Fixity {
     Infix,
     Prefix,
@@ -1314,6 +1348,7 @@ pub trait Operator<D: Dialect> {
     const FIXITY: Fixity;
 }
 
+/// A custom operator expression.
 pub struct OperatorExpr<O: Operator<D>, D: Dialect> {
     pub left: O::Left,
     pub right: O::Right,
