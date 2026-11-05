@@ -166,7 +166,7 @@ let teams = db
 
 ```toml
 [dependencies]
-wormx = { version = "0.1", features = ["postgres"] }
+wormx = { version = "0.2", features = ["postgres"] }
 sqlx = { version = "0.9", default-features = false, features = ["runtime-tokio", "postgres"] }
 ```
 
@@ -180,7 +180,7 @@ For MSSQL, also depend on `sqlx-mssql-rs`:
 
 ```toml
 [dependencies]
-wormx = { version = "0.1", features = ["mssql"] }
+wormx = { version = "0.2", features = ["mssql"] }
 sqlx-mssql-rs = "0.1"
 tokio = { version = "1", features = ["full"] }
 ```

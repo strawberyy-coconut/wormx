@@ -11,7 +11,7 @@ description = "Schema introspection, caching, and code generation for wormx's ta
 doctest = false
 
 [dependencies]
-wormx-core = { path = "../wormx-core", version = "0.1.0" }
+wormx-core = { path = "../wormx-core", version = "0.2.0" }
 
 sqlx-core = { workspace = true }
 
