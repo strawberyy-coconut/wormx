@@ -10,6 +10,37 @@ It targets SQL databases only. There is no NoSQL abstraction planned; the
 dialect layer exists to handle SQL spelling differences, not to abstract away
 non-SQL data models.
 
+## Architecture
+
+`wormx-core` is layered so a backend can reuse the schema and plan layers
+without inheriting SQL rendering:
+
+- `schema` — backend-neutral `TableDef`, `ColumnDef`, and `RelationDef`
+  metadata. It does not depend on SQLx or SQL.
+- `plan` — typed builders, plan structs, renderer traits, relations, and
+  deferred loading. Plans describe *what* to do. This layer is SQL-adjacent:
+  its expression type renders through `SqlWriter`, so it is reusable by SQL
+  backends, not by arbitrary query languages.
+- `sql` — `Dialect`, `SqlSyntax`, `SqlWriter`, expressions, and the SQL
+  renderers. Split into `syntax`, `writer`, `expr`, and `render`.
+- `exec` — `Db`, `Transaction`, and raw queries.
+
+`schema` is the fully neutral layer. A non-SQL backend can reuse it (and the
+code generator, caching, and `FromRow` generation) while supplying its own
+builders, writer, and renderers. Expecting a backend to own its renderer is
+deliberate: wormx does not try to ship one for every query language.
+
+For backends that do reuse the plan layer, renderers receive plan structs, so
+they can map a plan to their own constructs instead of implementing SQL.
+`Join` exposes its `kind`, `source`, and `on` fields for renderers that need to
+inspect a join rather than emit `JOIN ... ON ...`.
+
+Compile-time introspection is pluggable too. `wormx-macros-core` accepts a
+`TableDriver` — a describe function plus a constraints function — and
+`expand_table` runs the same cache and code generator for any driver. The
+built-in `wormx::table!` only wires up the bundled drivers; a third-party
+backend can call `expand_table` with its own driver or expose its own `table!`.
+
 wormx is a query and schema-introspection layer **on top of SQLx**. It does not
 manage schemas, migrations, or database lifecycle. Use SQLx's tooling for that
 (for example `sqlx migrate`, `sqlx-cli`, or embedded migrations), then run

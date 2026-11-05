@@ -13,9 +13,9 @@ use sqlx_core::sql_str::{AssertSqlSafe, SqlSafeStr};
 use sqlx_core::transaction::Transaction as SqlxTransaction;
 use sqlx_core::types::Type;
 
-use crate::dialect::{Dialect, SupportsUpsert};
-use crate::dml::{Delete, Insert, Update, Upsert};
-use crate::query::{IntoSelect, Select};
+use crate::plan::dml::{Delete, Insert, Update, Upsert};
+use crate::plan::query::{IntoSelect, Select};
+use crate::sql::{Dialect, SupportsUpsert};
 
 /// A database handle that pairs a SQLx pool with a wormx dialect.
 ///
@@ -59,24 +59,24 @@ impl<D: Dialect + Clone> Db<D> {
     }
 
     /// Starts an `INSERT` for a generated table.
-    pub fn insert<T: crate::metadata::Table>(&self) -> Insert<D, T> {
+    pub fn insert<T: crate::schema::Table>(&self) -> Insert<D, T> {
         Insert::new(self.clone())
     }
 
     /// Starts an `UPDATE` for a generated table.
-    pub fn update<T: crate::metadata::Table>(&self) -> Update<D, T> {
+    pub fn update<T: crate::schema::Table>(&self) -> Update<D, T> {
         Update::new(self.clone())
     }
 
     /// Starts a `DELETE` for a generated table.
-    pub fn delete<T: crate::metadata::Table>(&self) -> Delete<D, T> {
+    pub fn delete<T: crate::schema::Table>(&self) -> Delete<D, T> {
         Delete::new(self.clone())
     }
 
     /// Starts an upsert for a generated table.
     ///
     /// Available only for dialects that implement [`SupportsUpsert`].
-    pub fn upsert<T: crate::metadata::Table>(&self) -> Upsert<D, T>
+    pub fn upsert<T: crate::schema::Table>(&self) -> Upsert<D, T>
     where
         D: SupportsUpsert,
     {
@@ -137,24 +137,24 @@ impl<'a, D: Dialect + Clone> Transaction<'a, D> {
     }
 
     /// Starts an `INSERT`.
-    pub fn insert<T: crate::metadata::Table>(&self) -> Insert<D, T> {
+    pub fn insert<T: crate::schema::Table>(&self) -> Insert<D, T> {
         Insert::new(self.db.clone())
     }
 
     /// Starts an `UPDATE`.
-    pub fn update<T: crate::metadata::Table>(&self) -> Update<D, T> {
+    pub fn update<T: crate::schema::Table>(&self) -> Update<D, T> {
         Update::new(self.db.clone())
     }
 
     /// Starts a `DELETE`.
-    pub fn delete<T: crate::metadata::Table>(&self) -> Delete<D, T> {
+    pub fn delete<T: crate::schema::Table>(&self) -> Delete<D, T> {
         Delete::new(self.db.clone())
     }
 
     /// Starts an upsert.
     ///
     /// Available only for dialects that implement [`SupportsUpsert`].
-    pub fn upsert<T: crate::metadata::Table>(&self) -> Upsert<D, T>
+    pub fn upsert<T: crate::schema::Table>(&self) -> Upsert<D, T>
     where
         D: SupportsUpsert,
     {
