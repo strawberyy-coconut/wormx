@@ -9,7 +9,7 @@ use crate::plan::query::{
 };
 
 use super::expr::{render_column_ref, render_expr_kind, render_order};
-use super::{SqlDialect, SqlWriter, Writer};
+use super::{ReturningOp, ReturningPosition, SqlDialect, SqlWriter, Writer};
 
 impl TableSource {
     /// Writes the table, alias, and any dialect-defined suffix.
@@ -216,7 +216,14 @@ impl<D: SqlDialect> InsertRenderer<D> for SqlInsert {
         writer.write_insert();
         push_table(writer, plan.table.schema, plan.table.name);
 
+        let returning_position = plan
+            .returning
+            .then(|| writer.returning_position(ReturningOp::Insert));
+
         if plan.columns.is_empty() {
+            if returning_position == Some(ReturningPosition::BeforeValues) {
+                writer.write_returning_clause(ReturningOp::Insert);
+            }
             writer.write_insert_default();
         } else {
             writer.write_group_start();
@@ -227,6 +234,11 @@ impl<D: SqlDialect> InsertRenderer<D> for SqlInsert {
                 writer.push_ident(column);
             }
             writer.write_group_end();
+
+            if returning_position == Some(ReturningPosition::BeforeValues) {
+                writer.write_returning_clause(ReturningOp::Insert);
+            }
+
             writer.write_values();
 
             for (index, value) in plan.values.iter_mut().enumerate() {
@@ -238,8 +250,8 @@ impl<D: SqlDialect> InsertRenderer<D> for SqlInsert {
             writer.write_group_end();
         }
 
-        if plan.returning {
-            writer.write_returning();
+        if plan.returning && returning_position != Some(ReturningPosition::BeforeValues) {
+            writer.write_returning_clause(ReturningOp::Insert);
         }
 
         Ok(())
@@ -272,10 +284,18 @@ impl<D: SqlDialect> UpdateRenderer<D> for SqlUpdate {
             value.render(writer)?;
         }
 
+        let returning_position = plan
+            .returning
+            .then(|| writer.returning_position(ReturningOp::Update));
+
+        if returning_position == Some(ReturningPosition::BeforeWhere) {
+            writer.write_returning_clause(ReturningOp::Update);
+        }
+
         write_filters(writer, plan.filters)?;
 
-        if plan.returning {
-            writer.write_returning();
+        if plan.returning && returning_position != Some(ReturningPosition::BeforeWhere) {
+            writer.write_returning_clause(ReturningOp::Update);
         }
 
         Ok(())
@@ -290,10 +310,19 @@ impl<D: SqlDialect> DeleteRenderer<D> for SqlDelete {
     fn write(&self, plan: DeletePlan<'_, D>, writer: &mut SqlWriter<D>) -> Result<()> {
         writer.write_delete();
         plan.table.render(writer);
+
+        let returning_position = plan
+            .returning
+            .then(|| writer.returning_position(ReturningOp::Delete));
+
+        if returning_position == Some(ReturningPosition::BeforeWhere) {
+            writer.write_returning_clause(ReturningOp::Delete);
+        }
+
         write_filters(writer, plan.filters)?;
 
-        if plan.returning {
-            writer.write_returning();
+        if plan.returning && returning_position != Some(ReturningPosition::BeforeWhere) {
+            writer.write_returning_clause(ReturningOp::Delete);
         }
 
         Ok(())
@@ -360,7 +389,7 @@ impl<D: SqlDialect> UpsertRenderer<D> for SqlUpsert {
         }
 
         if plan.returning {
-            writer.write_returning();
+            writer.write_returning_clause(ReturningOp::Upsert);
         }
 
         Ok(())

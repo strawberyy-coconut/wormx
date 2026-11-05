@@ -5,15 +5,23 @@ wormx::table!("orders");
 wormx::table!("shipments");
 wormx::table!("teams");
 wormx::table!("user_teams");
-wormx::table!("profiles");
+wormx::table! {
+    "profiles" as Profiles {
+        derives(Debug, Clone),
+        columns {
+            "handle" as profile_handle,
+        },
+    }
+}
 wormx::table!("profile_links");
 wormx::table!("implicit_parents");
 wormx::table!("implicit_children");
 
 wormx::table! {
     "users" as RenamedUser {
-        derives(Debug, Clone),
-        attrs(allow(dead_code)),
+        derives(Debug, Clone, serde::Serialize),
+        attrs(allow(dead_code), serde(rename_all = "camelCase")),
+        relation_attrs(serde(skip)),
         columns {
             "name" as display_name {
                 attrs(allow(dead_code), doc = "The user's display name."),
@@ -103,6 +111,11 @@ mod tests {
         );
         assert_eq!(renamed.display_name, "Bob");
         assert_eq!(RenamedUser::fields().display_name().name(), "name");
+
+        let json = serde_json::to_value(&renamed).expect("serialize renamed user");
+        assert_eq!(json["displayName"], "Bob");
+        assert!(json.get("user_todos").is_none(), "{json}");
+        assert!(json.get("reviewer_todos").is_none(), "{json}");
     }
 
     #[test]
@@ -992,7 +1005,7 @@ mod tests {
             .await
             .expect("query belongs-to by unique column")
             .expect("profile exists");
-        assert_eq!(profile.handle, "alice");
+        assert_eq!(profile.profile_handle, "alice");
 
         let links = db
             .query(ProfileLinks::all())

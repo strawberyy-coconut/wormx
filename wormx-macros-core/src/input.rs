@@ -13,6 +13,8 @@ pub struct TableMacroInput {
     pub derives: Option<Vec<syn::Path>>,
     /// Table-level attributes, written without the surrounding `#[...]`.
     pub attrs: Vec<TokenStream>,
+    /// Attributes applied to every generated relation field.
+    pub relation_attrs: Vec<TokenStream>,
     pub columns: Vec<ColumnMacroOptions>,
 }
 
@@ -42,6 +44,7 @@ impl Parse for TableMacroInput {
 
         let mut derives = None;
         let mut attrs = Vec::new();
+        let mut relation_attrs = Vec::new();
         let mut columns = Vec::new();
 
         if input.peek(syn::token::Brace) {
@@ -64,13 +67,14 @@ impl Parse for TableMacroInput {
                         );
                     }
                     "attrs" => attrs = parse_attrs(&content)?,
+                    "relation_attrs" => relation_attrs = parse_attrs(&content)?,
                     "columns" => columns = parse_columns(&content)?,
                     _ => {
                         return Err(syn::Error::new(
                             option.span(),
                             format!(
                                 "unknown `table!` option {option_name:?}; expected `derives`, \
-                                 `attrs`, or `columns`"
+                                 `attrs`, `relation_attrs`, or `columns`"
                             ),
                         ));
                     }
@@ -98,6 +102,7 @@ impl Parse for TableMacroInput {
             struct_name,
             derives,
             attrs,
+            relation_attrs,
             columns,
         })
     }
@@ -245,6 +250,7 @@ mod tests {
         assert!(input.struct_name.is_none());
         assert!(input.derives.is_none());
         assert!(input.attrs.is_empty());
+        assert!(input.relation_attrs.is_empty());
         assert!(input.columns.is_empty());
     }
 
@@ -254,6 +260,7 @@ mod tests {
             "dbo.source_file" as SourceFile {
                 derives(Debug, Clone, serde::Serialize, utoipa::ToSchema),
                 attrs(schema(as = TranscriptionError)),
+                relation_attrs(serde(skip), schema(ignore)),
                 columns {
                     publication_date {
                         attrs(
@@ -287,6 +294,10 @@ mod tests {
             input.attrs[0].to_string(),
             "schema (as = TranscriptionError)"
         );
+
+        assert_eq!(input.relation_attrs.len(), 2);
+        assert_eq!(input.relation_attrs[0].to_string(), "serde (skip)");
+        assert_eq!(input.relation_attrs[1].to_string(), "schema (ignore)");
 
         assert_eq!(input.columns.len(), 2);
         assert_eq!(input.columns[0].name, "publication_date");

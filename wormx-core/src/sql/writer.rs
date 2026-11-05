@@ -1,6 +1,6 @@
 //! SQL spelling helpers for the neutral command writer.
 
-use super::syntax::SqlDialect;
+use super::syntax::{ReturningOp, ReturningPosition, SqlDialect};
 pub use crate::plan::command::Writer;
 
 /// Compatibility alias for the old name.
@@ -56,6 +56,15 @@ impl<D: SqlDialect> Writer<D> {
 
     pub fn write_returning(&mut self) {
         D::write_returning(self);
+    }
+
+    pub fn returning_position(&self, op: ReturningOp) -> ReturningPosition {
+        self.dialect().returning_position(op)
+    }
+
+    pub fn write_returning_clause(&mut self, op: ReturningOp) {
+        let dialect = self.dialect().clone();
+        dialect.write_returning_clause(op, self);
     }
 
     pub fn write_on_conflict(&mut self) {

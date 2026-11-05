@@ -3,6 +3,30 @@
 use super::writer::SqlWriter;
 use crate::plan::backend::Dialect;
 
+/// The DML operation requesting returned rows.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ReturningOp {
+    Insert,
+    Update,
+    Delete,
+    Upsert,
+}
+
+/// Where a dialect places the clause that returns rows from a DML statement.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ReturningPosition {
+    /// After the complete statement, as in PostgreSQL and SQLite `RETURNING`.
+    Trailing,
+    /// For `INSERT`: after the target and column list, before `VALUES`.
+    ///
+    /// This is where SQL Server's `OUTPUT INSERTED.*` belongs.
+    BeforeValues,
+    /// For `UPDATE` and `DELETE`: before `WHERE`.
+    ///
+    /// This is where SQL Server's `OUTPUT` clause belongs.
+    BeforeWhere,
+}
+
 /// Generic SQL spelling hooks used by the built-in renderers.
 ///
 /// The neutral [`Dialect`] identifies the database and chooses renderers; this
@@ -101,6 +125,26 @@ pub trait SqlSyntax: Dialect + 'static + Sized + Send + Sync {
         Self: Dialect,
     {
         writer.push(" RETURNING *");
+    }
+
+    /// Where the returned-row clause belongs for `op`.
+    ///
+    /// The default is [`ReturningPosition::Trailing`], which matches
+    /// PostgreSQL and SQLite. SQL Server places `OUTPUT` before `VALUES` and
+    /// before `WHERE`.
+    fn returning_position(&self, _op: ReturningOp) -> ReturningPosition {
+        ReturningPosition::Trailing
+    }
+
+    /// Writes the returned-row clause for `op`.
+    ///
+    /// The default keeps the existing `RETURNING *` spelling. Dialects whose
+    /// spelling depends on the operation override this.
+    fn write_returning_clause(&self, _op: ReturningOp, writer: &mut SqlWriter<Self>)
+    where
+        Self: Dialect,
+    {
+        Self::write_returning(writer);
     }
 
     fn write_on_conflict(writer: &mut SqlWriter<Self>)

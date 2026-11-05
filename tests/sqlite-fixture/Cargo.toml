@@ -8,6 +8,8 @@ publish = false
 [dependencies]
 wormx = { path = "../..", features = ["macros", "sqlite"] }
 sqlx = { workspace = true, features = ["runtime-tokio", "sqlite"] }
+serde = { workspace = true }
+serde_json = { workspace = true }
 
 [dev-dependencies]
 tokio = { workspace = true }

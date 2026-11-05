@@ -43,9 +43,9 @@ pub use sql::render::{
     write_from_filters, write_groups_having, write_orders, write_projection, write_tail,
 };
 pub use sql::{
-    Dialect, Fixity, Function, FunctionArgs, Operator, OperatorExpr, SqlDialect, SqlSyntax,
-    SqlWriter, SupportsArrays, SupportsFullJoin, SupportsFullTextSearch, SupportsJson,
-    SupportsReturning, SupportsUpsert, Textual, Writer, call,
+    Dialect, Fixity, Function, FunctionArgs, Operator, OperatorExpr, ReturningOp,
+    ReturningPosition, SqlDialect, SqlSyntax, SqlWriter, SupportsArrays, SupportsFullJoin,
+    SupportsFullTextSearch, SupportsJson, SupportsReturning, SupportsUpsert, Textual, Writer, call,
 };
 
 // Backwards-compatible module paths. Prefer `schema`, `plan`, `sql`, and

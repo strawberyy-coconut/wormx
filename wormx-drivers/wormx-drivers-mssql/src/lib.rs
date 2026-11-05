@@ -2,9 +2,9 @@
 
 use sqlx_core::error::{Error, Result};
 use wormx_core::{
-    Delete, Dialect, ProjectedSelect, Projection, Select, SqlSyntax, SqlWriter, SupportsFullJoin,
-    SupportsFullTextSearch, SupportsUpsert, Table, TableSource, Update, Upsert, UpsertPlan,
-    UpsertRenderer,
+    Delete, Dialect, ProjectedSelect, Projection, ReturningOp, ReturningPosition, Select,
+    SqlSyntax, SqlWriter, SupportsFullJoin, SupportsFullTextSearch, SupportsReturning,
+    SupportsUpsert, Table, TableSource, Update, Upsert, UpsertPlan, UpsertRenderer,
 };
 
 /// The Microsoft SQL Server dialect marker.
@@ -46,6 +46,23 @@ impl SqlSyntax for MssqlDialect {
         writer.push(" OPTION (");
         writer.push(tail);
         writer.push(")");
+    }
+
+    fn returning_position(&self, op: ReturningOp) -> ReturningPosition {
+        match op {
+            ReturningOp::Insert => ReturningPosition::BeforeValues,
+            ReturningOp::Update | ReturningOp::Delete => ReturningPosition::BeforeWhere,
+            ReturningOp::Upsert => ReturningPosition::Trailing,
+        }
+    }
+
+    fn write_returning_clause(&self, op: ReturningOp, writer: &mut SqlWriter<Self>) {
+        match op {
+            ReturningOp::Delete => writer.push(" OUTPUT DELETED.*"),
+            ReturningOp::Insert | ReturningOp::Update | ReturningOp::Upsert => {
+                writer.push(" OUTPUT INSERTED.*");
+            }
+        }
     }
 
     fn write_limit_offset(
@@ -281,7 +298,12 @@ impl UpsertRenderer<MssqlDialect> for MssqlUpsert {
             }
             push_qualified(writer, "source", column);
         }
-        writer.push(");");
+        writer.push(")");
+
+        if plan.returning {
+            writer.write_returning_clause(ReturningOp::Upsert);
+        }
+        writer.push(";");
 
         Ok(())
     }
@@ -303,6 +325,7 @@ fn push_qualified(writer: &mut SqlWriter<MssqlDialect>, alias: &str, column: &st
 
 impl SupportsFullJoin for MssqlDialect {}
 impl SupportsFullTextSearch for MssqlDialect {}
+impl SupportsReturning for MssqlDialect {}
 impl SupportsUpsert for MssqlDialect {}
 
 #[cfg(feature = "macros")]
@@ -563,8 +586,9 @@ pub use macros::MSSQL;
 mod tests {
     use super::*;
     use wormx_core::{
-        ColumnDef, DeleteRenderer, Expr, SelectRenderer, SqlDelete, SqlSelect, SqlUpdate,
-        StarProjection, TableDef, TableSource, UpdateRenderer, UpsertRenderer,
+        ColumnDef, DeletePlan, DeleteRenderer, Expr, InsertPlan, InsertRenderer, SelectRenderer,
+        SqlDelete, SqlInsert, SqlSelect, SqlUpdate, StarProjection, TableDef, TableSource,
+        UpdatePlan, UpdateRenderer, UpsertRenderer,
     };
 
     static COLUMNS: &[ColumnDef] = &[
@@ -654,7 +678,7 @@ mod tests {
     }
 
     #[test]
-    fn merge_upsert_does_not_emit_returning() {
+    fn merge_upsert_emits_output_when_returning() {
         let columns = ["id", "name"];
         let conflict_columns = ["id"];
         let mut values = vec![
@@ -674,7 +698,87 @@ mod tests {
         MssqlUpsert.write(plan, &mut writer).expect("render merge");
         let (sql, _args) = writer.finish();
 
+        assert!(sql.ends_with("OUTPUT INSERTED.*;"), "{sql}");
         assert!(!sql.contains("RETURNING"), "{sql}");
+    }
+
+    #[test]
+    fn renders_output_for_returning_dml() {
+        let columns = ["name"];
+        let mut values = vec![Expr::<(), MssqlDialect>::raw("?")];
+        let mut writer = SqlWriter::new(MssqlDialect);
+        SqlInsert
+            .write(
+                InsertPlan {
+                    table: &TABLE,
+                    columns: &columns,
+                    values: &mut values,
+                    returning: true,
+                },
+                &mut writer,
+            )
+            .expect("render insert");
+        let (sql, _args) = writer.finish();
+        assert_eq!(
+            sql,
+            "INSERT INTO [dbo].[wormx_users]([name]) OUTPUT INSERTED.* VALUES (?)"
+        );
+
+        let mut writer = SqlWriter::new(MssqlDialect);
+        SqlInsert
+            .write(
+                InsertPlan {
+                    table: &TABLE,
+                    columns: &[],
+                    values: &mut [],
+                    returning: true,
+                },
+                &mut writer,
+            )
+            .expect("render default insert");
+        let (sql, _args) = writer.finish();
+        assert_eq!(
+            sql,
+            "INSERT INTO [dbo].[wormx_users] OUTPUT INSERTED.* DEFAULT VALUES"
+        );
+
+        let mut assignments = vec![("name", Expr::<(), MssqlDialect>::raw("?"))];
+        let mut filters = vec![Expr::<bool, MssqlDialect>::raw("1 = 1")];
+        let mut writer = SqlWriter::new(MssqlDialect);
+        SqlUpdate
+            .write(
+                UpdatePlan {
+                    table: TableSource::new(&TABLE, None),
+                    assignments: &mut assignments,
+                    filters: &mut filters,
+                    returning: true,
+                },
+                &mut writer,
+            )
+            .expect("render update");
+        let (sql, _args) = writer.finish();
+        assert_eq!(
+            sql,
+            "UPDATE [dbo].[wormx_users] SET [name] = ? OUTPUT INSERTED.* WHERE (1 = 1)"
+        );
+
+        let mut filters = vec![Expr::<bool, MssqlDialect>::raw("1 = 1")];
+        let mut writer = SqlWriter::new(MssqlDialect);
+        SqlDelete
+            .write(
+                DeletePlan {
+                    table: TableSource::new(&TABLE, None),
+                    filters: &mut filters,
+                    returning: true,
+                },
+                &mut writer,
+            )
+            .expect("render delete");
+        let (sql, _args) = writer.finish();
+        assert_eq!(
+            sql,
+            "DELETE FROM [dbo].[wormx_users] OUTPUT DELETED.* WHERE (1 = 1)"
+        );
     }
 
     #[test]

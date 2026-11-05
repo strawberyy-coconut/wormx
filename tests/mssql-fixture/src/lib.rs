@@ -163,4 +163,45 @@ mod tests {
             1
         );
     }
+
+    #[tokio::test]
+    async fn returns_rows_from_dml() {
+        let pool = sqlx_mssql_rs::MssqlPool::connect(env!("DATABASE_URL"))
+            .await
+            .expect("connect to MSSQL fixture database");
+        let db = wormx::Db::new(pool, wormx::MssqlDialect);
+        let mut tx = db.begin().await.expect("begin transaction");
+
+        let inserted = db
+            .insert::<WormxUsers>()
+            .value(WormxUsers::fields().name(), "Returning User".to_owned())
+            .value(WormxUsers::fields().email(), None::<String>)
+            .value(WormxUsers::fields().active(), true)
+            .exec_returning_in(&mut tx)
+            .await
+            .expect("insert with OUTPUT");
+        assert!(inserted.id > 0);
+        assert_eq!(inserted.name, "Returning User");
+
+        let updated = db
+            .update::<WormxUsers>()
+            .set(WormxUsers::fields().name(), "Updated User".to_owned())
+            .filter(WormxUsers::fields().id().eq(inserted.id))
+            .exec_returning_in(&mut tx)
+            .await
+            .expect("update with OUTPUT");
+        assert_eq!(updated.len(), 1);
+        assert_eq!(updated[0].name, "Updated User");
+
+        let deleted = db
+            .delete::<WormxUsers>()
+            .filter(WormxUsers::fields().id().eq(inserted.id))
+            .exec_returning_in(&mut tx)
+            .await
+            .expect("delete with OUTPUT");
+        assert_eq!(deleted.len(), 1);
+        assert_eq!(deleted[0].name, "Updated User");
+
+        tx.rollback().await.expect("roll back transaction");
+    }
 }
