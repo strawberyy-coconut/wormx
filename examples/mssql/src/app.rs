@@ -7,8 +7,10 @@ wormx::sql_function! {
     fn len(value: String) -> i64;
 }
 
-wormx::infix_operator! {
+wormx::operator! {
     fn concat(left: String, right: String) -> String = "+";
+    fixity = Infix;
+    grouping = Operands;
 }
 
 /// A hand-written driver extension: no core change needed.

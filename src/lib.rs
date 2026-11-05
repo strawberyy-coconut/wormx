@@ -93,11 +93,7 @@ macro_rules! sql_function {
     };
 }
 
-/// Declares a typed operator with an explicit fixity and grouping policy.
-///
-/// This is the preferred spelling for new operators; the older
-/// [`infix_operator!`], [`prefix_operator!`], and [`postfix_operator!`] macros
-/// remain available as shortcuts for grouped infix/prefix/postfix operators.
+/// Declares a typed SQL operator.
 ///
 /// ```ignore
 /// wormx::operator! {
@@ -105,13 +101,40 @@ macro_rules! sql_function {
 ///     fixity = Infix;
 ///     grouping = Operands; // Operands | None | Precedence(6)
 /// }
+///
+/// wormx::operator! {
+///     pub fn is_unknown(value: String) -> bool = "IS UNKNOWN";
+///     fixity = Postfix;
+///     grouping = Operands;
+/// }
 /// ```
 ///
-/// `grouping = Operands` (the default) parenthesizes each operand.
-/// `grouping = None` opts out and is only safe when the operator's SQL grammar
-/// makes grouping unnecessary. `Precedence(n)` is accepted but currently
-/// renders like `Operands`; a future release may use the declared precedence to
-/// drop redundant parentheses.
+/// `grouping = Operands` (the default) parenthesizes each operand, so nested
+/// logical expressions keep their intended association. `grouping = None` opts
+/// out and is only safe when the operator's SQL grammar makes grouping
+/// unnecessary. `Precedence(n)` is accepted but currently renders like
+/// `Operands`; a future release may use the declared precedence to drop
+/// redundant parentheses.
+///
+/// Caveats:
+///
+/// - The return type is a declaration, not a check, and operands are type-erased
+///   after `IntoExpr`. The macro checks arity but not SQL result types.
+/// - The SQL spelling is a single `&'static str` used for every dialect;
+///   implement [`Operator`] for a concrete dialect when the spelling differs.
+/// - `Column<T>` carries a table-name string, not a table type, so columns from
+///   different tables can be composed without a compile error.
+/// - There is no associativity declaration; `a OP b OP c` follows the SQL
+///   database's precedence rules.
+/// - Only unary and binary shapes are supported. `BETWEEN`, `CASE`, and other
+///   multi-token forms need [`Operator`] or [`Function`].
+/// - Prefix and postfix operators always write a space around the operator.
+///   That is valid for words such as `NOT`, but glued operators render as
+///   `x :: int` rather than `x::int`.
+/// - The generated name is a free function in the caller's crate, so it can
+///   collide with generated `fields()` accessors or other helpers.
+/// - For negation prefer the built-in `.not()`, which has the same safe
+///   grouping.
 #[macro_export]
 macro_rules! operator {
     // Infix with explicit grouping.
@@ -258,7 +281,7 @@ macro_rules! operator {
             )
         }
     };
-    // Default: grouped infix, preserving the `infix_operator!` shorthand.
+    // Default: grouped infix.
     (
         $vis:vis fn $name:ident($left:ident : $lty:ty, $right:ident : $rty:ty) -> $ret:ty = $sql:expr;
     ) => {
@@ -272,78 +295,6 @@ macro_rules! operator {
                 $sql,
                 $crate::IntoExpr::<$rty, D>::into_expr(right),
             )
-        }
-    };
-}
-
-/// Declares a typed infix operator.
-///
-/// Operands are parenthesized by the renderer, so nested logical expressions
-/// keep their intended association. The SQL spelling is a single `&'static str`
-/// used for every dialect; implement [`Operator`] for a concrete dialect when
-/// the spelling differs.
-///
-/// Caveats:
-///
-/// - The return type is a declaration, not a check, and operands are type-erased
-///   after `IntoExpr`. The macro checks arity but not SQL result types.
-/// - `Column<T>` carries a table-name string, not a table type, so columns from
-///   different tables can be composed without a compile error.
-/// - There is no associativity declaration; `a OP b OP c` follows the SQL
-///   database's precedence rules.
-/// - Only unary and binary shapes are supported. `BETWEEN`, `CASE`, and other
-///   multi-token forms need [`Operator`] or [`Function`].
-/// - The generated name is a free function in the caller's crate, so it can
-///   collide with generated `fields()` accessors or other helpers.
-#[macro_export]
-macro_rules! infix_operator {
-    ($vis:vis fn $name:ident($left:ident : $lty:ty, $right:ident : $rty:ty) -> $ret:ty = $sql:expr;) => {
-        $crate::operator! {
-            $vis fn $name($left: $lty, $right: $rty) -> $ret = $sql;
-            fixity = Infix;
-            grouping = Operands;
-        }
-    };
-}
-
-/// Declares a typed prefix operator.
-///
-/// The operand is always parenthesized, so a declared prefix operator composes
-/// safely with logical expressions:
-///
-/// ```ignore
-/// wormx::prefix_operator! { fn not_(v: bool) -> bool = "NOT"; }
-/// // not_(a.and(b)) renders as: NOT ((a) AND (b))
-/// ```
-///
-/// `PrefixExpr`/`PostfixExpr` always write a space around the operator. That is
-/// valid for words such as `NOT`, but glued operators render as `x :: int`
-/// rather than `x::int`. Use [`Operator`] if that spacing matters.
-///
-/// For negation prefer the built-in `.not()`, which has the same safe grouping.
-#[macro_export]
-macro_rules! prefix_operator {
-    ($vis:vis fn $name:ident($operand:ident : $ty:ty) -> $ret:ty = $sql:expr;) => {
-        $crate::operator! {
-            $vis fn $name($operand: $ty) -> $ret = $sql;
-            fixity = Prefix;
-            grouping = Operands;
-        }
-    };
-}
-
-/// Declares a typed postfix operator.
-///
-/// The operand is always parenthesized. Like the other operator macros, the SQL
-/// spelling is shared by every dialect and the declared return type is not
-/// validated against the database.
-#[macro_export]
-macro_rules! postfix_operator {
-    ($vis:vis fn $name:ident($operand:ident : $ty:ty) -> $ret:ty = $sql:expr;) => {
-        $crate::operator! {
-            $vis fn $name($operand: $ty) -> $ret = $sql;
-            fixity = Postfix;
-            grouping = Operands;
         }
     };
 }

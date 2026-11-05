@@ -7,8 +7,10 @@ wormx::sql_function! {
     fn lower(value: String) -> String;
 }
 
-wormx::infix_operator! {
+wormx::operator! {
     fn ilike(left: String, right: String) -> bool = "ILIKE";
+    fixity = Infix;
+    grouping = Operands;
 }
 
 pub type ExampleDb = Db<PostgresDialect>;

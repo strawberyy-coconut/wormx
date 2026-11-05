@@ -7,8 +7,10 @@ wormx::sql_function! {
     fn upper(value: String) -> String;
 }
 
-wormx::infix_operator! {
+wormx::operator! {
     fn concat(left: String, right: String) -> String = "||";
+    fixity = Infix;
+    grouping = Operands;
 }
 
 pub type ExampleDb = Db<SqliteDialect>;

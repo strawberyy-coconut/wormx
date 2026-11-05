@@ -10,12 +10,16 @@ wormx::sql_function! {
     pub fn lower(value: String) -> String;
 }
 
-wormx::infix_operator! {
+wormx::operator! {
     pub fn concat(left: String, right: String) -> String = "||";
+    fixity = Infix;
+    grouping = Operands;
 }
 
-wormx::prefix_operator! {
+wormx::operator! {
     pub fn not_(value: bool) -> bool = "NOT";
+    fixity = Prefix;
+    grouping = Operands;
 }
 
 wormx::operator! {

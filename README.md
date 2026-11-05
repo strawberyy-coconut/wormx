@@ -442,9 +442,7 @@ let users = db
 `sql_function!` accepts columns, typed expressions, and Rust values for its
 arguments. Use `sql = "..."` when the SQL name differs from the Rust name.
 
-Custom operators follow the same pattern. Prefer the explicit `operator!` form;
-the older `infix_operator!`, `prefix_operator!`, and `postfix_operator!` macros
-remain as shorthands for grouped operators:
+Custom operators follow the same pattern:
 
 ```rust
 wormx::operator! {
@@ -453,8 +451,10 @@ wormx::operator! {
     grouping = Operands; // Operands | None | Precedence(n)
 }
 
-wormx::prefix_operator! {
+wormx::operator! {
     pub fn is_unknown(value: String) -> bool = "IS UNKNOWN";
+    fixity = Postfix;
+    grouping = Operands;
 }
 ```
 
@@ -471,8 +471,10 @@ Custom operators parenthesize their operands by default, so a declared prefix
 operator is safe inside a larger predicate:
 
 ```rust
-wormx::prefix_operator! {
+wormx::operator! {
     pub fn not_(value: bool) -> bool = "NOT";
+    fixity = Prefix;
+    grouping = Operands;
 }
 
 // not_(active.eq(true).and(name.eq("Alice"))) renders as

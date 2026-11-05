@@ -11,8 +11,10 @@ wormx::sql_function! {
     fn concat(left: String, right: String) -> String; sql = "CONCAT"
 }
 
-wormx::infix_operator! {
+wormx::operator! {
     fn null_safe_eq(left: i64, right: i64) -> bool = "<=>";
+    fixity = Infix;
+    grouping = Operands;
 }
 
 pub type ExampleDb = Db<MySqlDialect>;
