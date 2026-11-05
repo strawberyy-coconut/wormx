@@ -19,3 +19,11 @@ pub mod writer;
 
 pub use dialect::*;
 pub use render::*;
+
+// Backend traits now live in `plan::backend`; re-export them so
+// `wormx_core::sql::Dialect` and friends keep working.
+pub use crate::plan::backend::*;
+
+// The expression AST is backend-neutral and now lives in `plan::expr`. These
+// re-exports keep `wormx_core::sql::Expr` and friends working.
+pub use crate::plan::expr::*;

@@ -1,10 +1,9 @@
-//! Typed SQL joins and join sources.
+//! Typed joins and join sources.
 
-use sqlx_core::error::Result;
-
+use super::backend::{Dialect, SupportsFullJoin};
+use super::expr::Expr;
 use super::query::Subquery;
 use crate::schema::TableDef;
-use crate::sql::{Dialect, Expr, SqlWriter, SupportsFullJoin};
 
 /// A table or table alias used as a `FROM`/`JOIN` source.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -33,18 +32,6 @@ impl TableSource {
     pub const fn with_suffix(mut self, suffix: &'static str) -> Self {
         self.suffix = Some(suffix);
         self
-    }
-
-    /// Writes the table, alias, and any dialect-defined suffix.
-    pub fn render<D: Dialect>(&self, writer: &mut SqlWriter<'_, D>) {
-        push_table(writer, self.def.schema, self.def.name);
-        if let Some(alias) = self.alias {
-            writer.write_as();
-            writer.push_ident(alias);
-        }
-        if let Some(suffix) = self.suffix {
-            writer.write_source_suffix(suffix);
-        }
     }
 }
 
@@ -185,37 +172,4 @@ impl<D: Dialect> Join<D> {
             on,
         }
     }
-
-    /// Writes the join clause.
-    ///
-    /// This is public so an external [`super::query::SelectRenderer`] can
-    /// reproduce the generic select renderer for joined queries.
-    pub fn render(&mut self, writer: &mut SqlWriter<'_, D>) -> Result<()> {
-        writer.write_join(self.kind);
-        match &mut self.source {
-            JoinSource::Table(source) => source.render(writer),
-            JoinSource::Derived { query, alias } => {
-                writer.write_group_start();
-                query.render(writer)?;
-                writer.write_group_end();
-                writer.write_as();
-                writer.push_ident(alias);
-            }
-            JoinSource::Named(name) => writer.push_ident(name),
-        }
-        writer.write_on();
-        self.on.render(writer)
-    }
-}
-
-pub(crate) fn push_table<D: Dialect>(
-    writer: &mut SqlWriter<'_, D>,
-    schema: Option<&str>,
-    table: &str,
-) {
-    if let Some(schema) = schema {
-        writer.push_ident(schema);
-        writer.write_identifier_separator();
-    }
-    writer.push_ident(table);
 }

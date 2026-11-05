@@ -6,9 +6,10 @@ The core produces typed plans. The dialect lowers them to backend requests and
 owns the SQL rendering. The trait provides a generic SQL renderer as
 overridable defaults, so SQL drivers only override what differs.
 
-It targets SQL databases only. There is no NoSQL abstraction planned; the
-dialect layer exists to handle SQL spelling differences, not to abstract away
-non-SQL data models.
+The bundled drivers target SQL databases. There is no bundled NoSQL driver, but
+the runtime is not SQL-only: a dialect is SQLx-backed and supplies its own
+renderers, so a third-party backend can reuse the plan layer without changing
+core.
 
 ## Architecture
 
@@ -16,24 +17,27 @@ non-SQL data models.
 without inheriting SQL rendering:
 
 - `schema` — backend-neutral `TableDef`, `ColumnDef`, and `RelationDef`
-  metadata. It does not depend on SQLx or SQL.
-- `plan` — typed builders, plan structs, renderer traits, relations, and
-  deferred loading. Plans describe *what* to do. This layer is SQL-adjacent:
-  its expression type renders through `SqlWriter`, so it is reusable by SQL
-  backends, not by arbitrary query languages.
-- `sql` — `Dialect`, `SqlSyntax`, `SqlWriter`, expressions, and the SQL
+  metadata. It does not depend on SQL.
+- `plan` — typed builders, plan structs, the neutral `Expr`/`ExprKind` AST,
+  renderer traits, relations, and deferred loading. Plans describe *what* to
+  do; dialects supply renderers that interpret the AST.
+- `sql` — `SqlDialect`, `SqlSyntax`, `SqlWriter` helpers, and the concrete SQL
   renderers. Split into `syntax`, `writer`, `expr`, and `render`.
 - `exec` — `Db`, `Transaction`, and raw queries.
 
-`schema` is the fully neutral layer. A non-SQL backend can reuse it (and the
-code generator, caching, and `FromRow` generation) while supplying its own
-builders, writer, and renderers. Expecting a backend to own its renderer is
-deliberate: wormx does not try to ship one for every query language.
+`schema` and `plan` are backend-neutral. A dialect implements `Dialect` with
+`type DB: sqlx::Database` and its own `Select`/`Insert`/`Update`/`Delete`/
+`Upsert` renderers. SQL dialects additionally implement `SqlSyntax`;
+`SqlDialect` is that specialization. Execution stays SQLx-native: `Db<D>` holds
+`Pool<D::DB>`, and values use SQLx's `Encode`/`Decode`/`Type`. A Cypher or
+document backend therefore implements `sqlx::Database` and supplies its own
+renderers, while reusing the plan, relations, includes, transactions, and
+`FromRow` machinery.
 
-For backends that do reuse the plan layer, renderers receive plan structs, so
-they can map a plan to their own constructs instead of implementing SQL.
-`Join` exposes its `kind`, `source`, and `on` fields for renderers that need to
-inspect a join rather than emit `JOIN ... ON ...`.
+Renderers receive plan structs, so they can map a plan to their own constructs
+instead of implementing SQL. `Join` exposes its `kind`, `source`, and `on`
+fields, and `ExprKind` is public, so a renderer can inspect the plan rather than
+emit `JOIN ... ON ...`.
 
 Compile-time introspection is pluggable too. `wormx-macros-core` accepts a
 `TableDriver` — a describe function plus a constraints function — and

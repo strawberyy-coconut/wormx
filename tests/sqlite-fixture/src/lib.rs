@@ -90,20 +90,20 @@ mod tests {
         }
 
         let dialect = SqliteDialect;
-        let mut writer = SqlWriter::new(&dialect);
+        let mut writer = SqlWriter::new(dialect);
         let mut expr = wormx::call::<SqliteDialect, Upper>((Expr::column("users", "name"),));
 
         expr.render(&mut writer).expect("render expression");
         let (sql, _args) = writer.finish();
         assert_eq!(sql, "UPPER(\"users\".\"name\")");
 
-        let mut writer = SqlWriter::new(&dialect);
+        let mut writer = SqlWriter::new(dialect);
         let mut expr = concat(Users::fields().name(), "!");
         expr.render(&mut writer).expect("render operator");
         let (sql, _args) = writer.finish();
         assert_eq!(sql, "(\"users\".\"name\") || (?)");
 
-        let mut writer = SqlWriter::new(&dialect);
+        let mut writer = SqlWriter::new(dialect);
         let mut expr = Users::fields()
             .active()
             .eq(true)
@@ -119,26 +119,26 @@ mod tests {
         use wormx::{Expr, SqlWriter, SqliteDialect};
 
         let dialect = SqliteDialect;
-        let mut writer = SqlWriter::new(&dialect);
+        let mut writer = SqlWriter::new(dialect);
         let mut expr = not_(Expr::<bool, SqliteDialect>::raw("a").and(Expr::raw("b")));
 
         expr.render(&mut writer).expect("render prefix operator");
         let (sql, _args) = writer.finish();
         assert_eq!(sql, "NOT ((a) AND (b))");
 
-        let mut writer = SqlWriter::new(&dialect);
+        let mut writer = SqlWriter::new(dialect);
         let mut expr = explicit_not(Expr::<bool, SqliteDialect>::raw("a"));
         expr.render(&mut writer).expect("render operator! prefix");
         let (sql, _args) = writer.finish();
         assert_eq!(sql, "NOT (a)");
 
-        let mut writer = SqlWriter::new(&dialect);
+        let mut writer = SqlWriter::new(dialect);
         let mut expr = raw_concat(Expr::<String, SqliteDialect>::raw("a"), Expr::raw("b"));
         expr.render(&mut writer).expect("render ungrouped operator");
         let (sql, _args) = writer.finish();
         assert_eq!(sql, "a || b");
 
-        let mut writer = SqlWriter::new(&dialect);
+        let mut writer = SqlWriter::new(dialect);
         let mut expr = prec_concat(Expr::<String, SqliteDialect>::raw("a"), Expr::raw("b"));
         expr.render(&mut writer)
             .expect("render precedence operator");
@@ -165,18 +165,18 @@ mod tests {
             Expr::<i64, SqliteDialect>::infix::<i64, i64>(Expr::raw("b"), "*", Expr::raw("c"));
         let mut expr = Expr::<i64, SqliteDialect>::infix::<i64, i64>(Expr::raw("a"), "+", inner);
 
-        let mut writer = SqlWriter::new(&dialect);
+        let mut writer = SqlWriter::new(dialect);
         expr.render(&mut writer).expect("render nested operators");
         let (sql, _args) = writer.finish();
         assert_eq!(sql, "(a) + ((b) * (c))");
 
-        let mut writer = SqlWriter::new(&dialect);
+        let mut writer = SqlWriter::new(dialect);
         let mut grouped = Expr::<i64, SqliteDialect>::raw("a + b").group();
         grouped.render(&mut writer).expect("render grouped expr");
         let (sql, _args) = writer.finish();
         assert_eq!(sql, "(a + b)");
 
-        let mut writer = SqlWriter::new(&dialect);
+        let mut writer = SqlWriter::new(dialect);
         let mut postfix = Expr::<i64, SqliteDialect>::postfix(Expr::raw("x"), "::int");
         postfix
             .render(&mut writer)
@@ -184,7 +184,7 @@ mod tests {
         let (sql, _args) = writer.finish();
         assert_eq!(sql, "(x) ::int");
 
-        let mut writer = SqlWriter::new(&dialect);
+        let mut writer = SqlWriter::new(dialect);
         let mut operator = Expr::<String, SqliteDialect>::new(
             OperatorExpr::<Concat, SqliteDialect>::new(Expr::raw("a"), Expr::raw("b")),
         );
@@ -209,13 +209,13 @@ mod tests {
             fn write<P>(
                 &self,
                 plan: SelectPlan<'_, SqliteDialect, P>,
-                writer: &mut SqlWriter<'_, SqliteDialect>,
+                writer: &mut SqlWriter<SqliteDialect>,
             ) -> sqlx::Result<()>
             where
-                P: wormx::ProjectionWriter<SqliteDialect>,
+                P: wormx::Projection<SqliteDialect>,
             {
                 writer.write_select(plan.distinct);
-                plan.projection.write(writer)?;
+                wormx::write_projection(writer, plan.projection)?;
                 wormx::write_from_filters(writer, plan.table, plan.filters, plan.joins)?;
                 wormx::write_groups_having(writer, plan.groups, plan.having)?;
                 wormx::write_orders(writer, plan.orders)?;
@@ -227,11 +227,11 @@ mod tests {
             fn write_count<P>(
                 &self,
                 plan: SelectPlan<'_, SqliteDialect, P>,
-                writer: &mut SqlWriter<'_, SqliteDialect>,
+                writer: &mut SqlWriter<SqliteDialect>,
                 distinct: bool,
             ) -> sqlx::Result<()>
             where
-                P: wormx::ProjectionWriter<SqliteDialect> + wormx::CountProjection<SqliteDialect>,
+                P: wormx::Projection<SqliteDialect> + wormx::CountProjection<SqliteDialect>,
             {
                 SqlSelect.write_count(plan, writer, distinct)
             }
@@ -239,14 +239,14 @@ mod tests {
             fn write_count_star(
                 &self,
                 plan: wormx::CountPlan<'_, SqliteDialect>,
-                writer: &mut SqlWriter<'_, SqliteDialect>,
+                writer: &mut SqlWriter<SqliteDialect>,
             ) -> sqlx::Result<()> {
                 SqlSelect.write_count_star(plan, writer)
             }
         }
 
         let dialect = SqliteDialect;
-        let mut writer = SqlWriter::new(&dialect);
+        let mut writer = SqlWriter::new(dialect);
         let mut projection = wormx::StarProjection;
         let mut filters = vec![Expr::<bool, SqliteDialect>::raw("1 = 1")];
         let mut joins = vec![wormx::Join::inner(
@@ -263,6 +263,7 @@ mod tests {
                     table: TableSource::new(Users::DEF, None).with_suffix("ROWLOCK"),
                     distinct: false,
                     projection: &mut projection,
+                    ctes: &mut [],
                     filters: &mut filters,
                     joins: &mut joins,
                     groups: &mut groups,
@@ -568,10 +569,10 @@ mod tests {
             fn write<P>(
                 &self,
                 plan: wormx::SelectPlan<'_, TrackingDialect, P>,
-                writer: &mut wormx::SqlWriter<'_, TrackingDialect>,
+                writer: &mut wormx::SqlWriter<TrackingDialect>,
             ) -> sqlx::Result<()>
             where
-                P: wormx::ProjectionWriter<TrackingDialect>,
+                P: wormx::Projection<TrackingDialect>,
             {
                 SELECT_CALLS.fetch_add(1, Ordering::SeqCst);
                 SqlSelect.write(plan, writer)
@@ -580,12 +581,11 @@ mod tests {
             fn write_count<P>(
                 &self,
                 plan: wormx::SelectPlan<'_, TrackingDialect, P>,
-                writer: &mut wormx::SqlWriter<'_, TrackingDialect>,
+                writer: &mut wormx::SqlWriter<TrackingDialect>,
                 distinct: bool,
             ) -> sqlx::Result<()>
             where
-                P: wormx::ProjectionWriter<TrackingDialect>
-                    + wormx::CountProjection<TrackingDialect>,
+                P: wormx::Projection<TrackingDialect> + wormx::CountProjection<TrackingDialect>,
             {
                 SELECT_CALLS.fetch_add(1, Ordering::SeqCst);
                 SqlSelect.write_count(plan, writer, distinct)
@@ -594,7 +594,7 @@ mod tests {
             fn write_count_star(
                 &self,
                 plan: wormx::CountPlan<'_, TrackingDialect>,
-                writer: &mut wormx::SqlWriter<'_, TrackingDialect>,
+                writer: &mut wormx::SqlWriter<TrackingDialect>,
             ) -> sqlx::Result<()> {
                 SELECT_CALLS.fetch_add(1, Ordering::SeqCst);
                 SqlSelect.write_count_star(plan, writer)
@@ -1176,5 +1176,125 @@ mod tests {
             .await
             .expect_err("INCLUDE followed by SELECT must fail");
         assert!(error.to_string().contains("after .select"));
+    }
+
+    #[tokio::test]
+    async fn a_custom_dialect_reuses_the_plan_with_its_own_renderer() {
+        use wormx::{
+            ColumnRef, CountProjection, Dialect, ExprKind, Projection, ProjectionVisitor,
+            SelectPlan, SelectRenderer, SqlSyntax, Writer,
+        };
+
+        #[derive(Debug, Clone, Copy, Default)]
+        struct Cypherish;
+
+        #[derive(Default)]
+        struct CypherSelect;
+
+        impl Dialect for Cypherish {
+            type DB = sqlx::Sqlite;
+            type Select = CypherSelect;
+            type Insert = wormx::SqlInsert;
+            type Update = wormx::SqlUpdate;
+            type Delete = wormx::SqlDelete;
+            type Upsert = wormx::SqlUpsert;
+
+            fn quote_ident(&self, name: &str) -> String {
+                format!("`{name}`")
+            }
+        }
+
+        impl SqlSyntax for Cypherish {}
+
+        struct CypherProjection<'a> {
+            writer: &'a mut Writer<Cypherish>,
+        }
+
+        impl ProjectionVisitor<Cypherish> for CypherProjection<'_> {
+            fn star(&mut self) -> sqlx::Result<()> {
+                self.writer.push("*");
+                Ok(())
+            }
+
+            fn column(&mut self, column: &ColumnRef) -> sqlx::Result<()> {
+                self.writer.push(&column.column);
+                Ok(())
+            }
+
+            fn expr(&mut self, _expr: &mut ExprKind<Cypherish>) -> sqlx::Result<()> {
+                self.writer.push("<expr>");
+                Ok(())
+            }
+
+            fn separator(&mut self) -> sqlx::Result<()> {
+                self.writer.push(", ");
+                Ok(())
+            }
+
+            fn begin_count(&mut self, _distinct: bool) -> sqlx::Result<()> {
+                self.writer.push("count(");
+                Ok(())
+            }
+
+            fn end_count(&mut self) -> sqlx::Result<()> {
+                self.writer.push(")");
+                Ok(())
+            }
+        }
+
+        impl SelectRenderer<Cypherish> for CypherSelect {
+            fn write<P>(
+                &self,
+                plan: SelectPlan<'_, Cypherish, P>,
+                writer: &mut Writer<Cypherish>,
+            ) -> sqlx::Result<()>
+            where
+                P: Projection<Cypherish>,
+            {
+                writer.push("MATCH (n) WHERE ");
+                writer.push(&format!("{} filter(s) RETURN ", plan.filters.len()));
+                plan.projection.visit(&mut CypherProjection { writer })
+            }
+
+            fn write_count<P>(
+                &self,
+                plan: SelectPlan<'_, Cypherish, P>,
+                writer: &mut Writer<Cypherish>,
+                distinct: bool,
+            ) -> sqlx::Result<()>
+            where
+                P: Projection<Cypherish> + CountProjection<Cypherish>,
+            {
+                writer.push("RETURN count(");
+                if distinct {
+                    writer.push("distinct ");
+                }
+                plan.projection.visit(&mut CypherProjection { writer })?;
+                writer.push(")");
+                Ok(())
+            }
+
+            fn write_count_star(
+                &self,
+                _plan: wormx::CountPlan<'_, Cypherish>,
+                writer: &mut Writer<Cypherish>,
+            ) -> sqlx::Result<()> {
+                writer.push("RETURN count(*)");
+                Ok(())
+            }
+        }
+
+        let pool = sqlx::SqlitePool::connect(env!("DATABASE_URL"))
+            .await
+            .expect("connect to fixture database");
+        let db = wormx::Db::new(pool, Cypherish);
+
+        let mut query = db
+            .query(Users::all())
+            .filter(Users::fields().id().gt(0_i64))
+            .select(Users::fields().id());
+
+        let (command, _args) = query.render().expect("render with custom dialect");
+        assert_eq!(command, "MATCH (n) WHERE 1 filter(s) RETURN id");
     }
 }

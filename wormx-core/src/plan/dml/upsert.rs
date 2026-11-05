@@ -11,10 +11,11 @@ use sqlx_core::query_as::query_as_with;
 use sqlx_core::sql_str::{AssertSqlSafe, SqlSafeStr};
 
 use crate::exec::{Db, Transaction};
+use crate::plan::backend::{Dialect, SupportsReturning};
+use crate::plan::expr::{Expr, IntoExpr};
 use crate::plan::join::TableSource;
 use crate::plan::query::{Column, UpsertPlan, UpsertRenderer};
 use crate::schema::Table;
-use crate::sql::{Dialect, Expr, IntoExpr, SqlWriter, SupportsReturning};
 
 /// A pending upsert, rendered by the dialect (`ON CONFLICT`, `ON DUPLICATE
 /// KEY UPDATE`, or `MERGE`).
@@ -137,7 +138,7 @@ impl<D: Dialect + Clone, T: Table> Upsert<D, T> {
             ));
         }
 
-        let mut writer = SqlWriter::new(self.db.dialect());
+        let mut writer = self.db.writer();
         D::Upsert::default().write(
             UpsertPlan {
                 table: self.source,

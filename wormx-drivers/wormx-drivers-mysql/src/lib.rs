@@ -58,7 +58,7 @@ impl UpsertRenderer<MySqlDialect> for MySqlUpsert {
     fn write(
         &self,
         plan: UpsertPlan<'_, MySqlDialect>,
-        writer: &mut SqlWriter<'_, MySqlDialect>,
+        writer: &mut SqlWriter<MySqlDialect>,
     ) -> Result<()> {
         if plan.assignments.is_empty() {
             return Err(Error::InvalidArgument(
@@ -101,7 +101,7 @@ impl UpsertRenderer<MySqlDialect> for MySqlUpsert {
     }
 }
 
-fn push_table(writer: &mut SqlWriter<'_, MySqlDialect>, table: &wormx_core::TableDef) {
+fn push_table(writer: &mut SqlWriter<MySqlDialect>, table: &wormx_core::TableDef) {
     if let Some(schema) = table.schema {
         writer.push_ident(schema);
         writer.write_identifier_separator();
@@ -350,7 +350,7 @@ mod tests {
 
     #[test]
     fn empty_insert_uses_mysql_syntax() {
-        let mut writer = SqlWriter::new(&MySqlDialect);
+        let mut writer = SqlWriter::new(MySqlDialect);
         <MySqlDialect as SqlSyntax>::write_insert_default(&mut writer);
         let (sql, _) = writer.finish();
         assert_eq!(sql, " () VALUES ()");

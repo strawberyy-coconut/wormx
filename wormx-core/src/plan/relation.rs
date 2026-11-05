@@ -8,11 +8,12 @@ use sqlx_core::error::Result;
 use sqlx_core::from_row::FromRow;
 use sqlx_core::types::Type;
 
+use super::backend::Dialect;
 use super::deferred::Deferred;
+use super::expr::Expr;
 use super::query::{Column, IntoSelect, Query, Select};
 use crate::exec::Db;
 use crate::schema::Table;
-use crate::sql::{Dialect, Expr};
 
 /// A single related row referenced by a foreign key.
 ///

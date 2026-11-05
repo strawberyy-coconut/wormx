@@ -15,11 +15,13 @@ use sqlx_core::query_as::query_as_with;
 use sqlx_core::sql_str::{AssertSqlSafe, SqlSafeStr};
 use sqlx_core::types::Type;
 
+use super::backend::Dialect;
+use super::command::Writer;
+use super::expr::{ColumnRef, Expr, ExprKind, IntoExpr, Order};
 use super::include::Include;
 use super::join::{Join, TableSource};
 use crate::exec::Db;
 use crate::schema::Table;
-use crate::sql::{Dialect, Expr, IntoExpr, Order, SqlWriter};
 
 /// A dialect-neutral table query.
 pub struct Query<T> {
@@ -80,76 +82,80 @@ impl<D: Dialect + Clone, T: Table + 'static> IntoSelect<D> for Filtered<D, T> {
     }
 }
 
-/// Writes the SQL for a projection.
-pub trait ProjectionWriter<D: Dialect>: Send {
-    fn write(&mut self, writer: &mut SqlWriter<'_, D>) -> Result<()>;
+/// A visitor for the items in a projection.
+///
+/// The dialect implements this to render a projection in its own language.
+pub trait ProjectionVisitor<D: Dialect> {
+    fn star(&mut self) -> Result<()>;
+    fn column(&mut self, column: &ColumnRef) -> Result<()>;
+    fn expr(&mut self, expr: &mut ExprKind<D>) -> Result<()>;
+    fn separator(&mut self) -> Result<()>;
+    fn begin_count(&mut self, distinct: bool) -> Result<()>;
+    fn end_count(&mut self) -> Result<()>;
 }
 
 /// The `*` projection used by generated table selects.
 #[derive(Debug, Clone, Copy, Default)]
 pub struct StarProjection;
 
-impl<D: Dialect> ProjectionWriter<D> for StarProjection {
-    fn write(&mut self, writer: &mut SqlWriter<'_, D>) -> Result<()> {
-        writer.write_star();
-        Ok(())
+impl<D: Dialect> Projection<D> for StarProjection {
+    type Output = ();
+    type Row = ();
+
+    fn visit(&mut self, out: &mut dyn ProjectionVisitor<D>) -> Result<()> {
+        out.star()
+    }
+
+    fn map(row: Self::Row) -> Self::Output {
+        row
     }
 }
 
 /// A selectable projection: one column/expression, or a tuple of them.
-pub trait Projection<D: Dialect>: ProjectionWriter<D> {
+pub trait Projection<D: Dialect>: Send {
     type Output;
     type Row: Send + Unpin;
+
+    fn visit(&mut self, out: &mut dyn ProjectionVisitor<D>) -> Result<()>;
 
     fn map(row: Self::Row) -> Self::Output;
 }
 
-impl<D: Dialect, C: Send + Unpin> ProjectionWriter<D> for Column<C> {
-    fn write(&mut self, writer: &mut SqlWriter<'_, D>) -> Result<()> {
-        self.render_column(writer);
-        Ok(())
-    }
-}
+/// Marker for projections that can be wrapped in `COUNT(...)`.
+pub trait CountProjection<D: Dialect>: Projection<D> {}
 
 impl<D: Dialect, C: Send + Unpin> Projection<D> for Column<C> {
     type Output = C;
     type Row = Scalar<C>;
 
+    fn visit(&mut self, out: &mut dyn ProjectionVisitor<D>) -> Result<()> {
+        out.column(&self.column_ref())
+    }
+
     fn map(row: Self::Row) -> Self::Output {
         row.0
     }
 }
 
-impl<D: Dialect, C: Send + Unpin> ProjectionWriter<D> for Expr<C, D> {
-    fn write(&mut self, writer: &mut SqlWriter<'_, D>) -> Result<()> {
-        self.render(writer)
-    }
-}
+impl<D: Dialect, C: Send + Unpin> CountProjection<D> for Column<C> {}
 
 impl<D: Dialect, C: Send + Unpin> Projection<D> for Expr<C, D> {
     type Output = C;
     type Row = Scalar<C>;
 
+    fn visit(&mut self, out: &mut dyn ProjectionVisitor<D>) -> Result<()> {
+        out.expr(self.kind_mut())
+    }
+
     fn map(row: Self::Row) -> Self::Output {
         row.0
     }
 }
 
+impl<D: Dialect, C: Send + Unpin> CountProjection<D> for Expr<C, D> {}
+
 // Tuple field access by index is not possible in a macro_rules! repetition, so
 // the tuple impls are written explicitly below.
-impl<D, A, B> ProjectionWriter<D> for (A, B)
-where
-    D: Dialect,
-    A: ProjectionWriter<D>,
-    B: ProjectionWriter<D>,
-{
-    fn write(&mut self, writer: &mut SqlWriter<'_, D>) -> Result<()> {
-        self.0.write(writer)?;
-        writer.write_comma();
-        self.1.write(writer)
-    }
-}
-
 impl<D, A, B> Projection<D> for (A, B)
 where
     D: Dialect,
@@ -161,24 +167,14 @@ where
     type Output = (A::Output, B::Output);
     type Row = (A::Output, B::Output);
 
+    fn visit(&mut self, out: &mut dyn ProjectionVisitor<D>) -> Result<()> {
+        self.0.visit(out)?;
+        out.separator()?;
+        self.1.visit(out)
+    }
+
     fn map(row: Self::Row) -> Self::Output {
         row
-    }
-}
-
-impl<D, A, B, C> ProjectionWriter<D> for (A, B, C)
-where
-    D: Dialect,
-    A: ProjectionWriter<D>,
-    B: ProjectionWriter<D>,
-    C: ProjectionWriter<D>,
-{
-    fn write(&mut self, writer: &mut SqlWriter<'_, D>) -> Result<()> {
-        self.0.write(writer)?;
-        writer.write_comma();
-        self.1.write(writer)?;
-        writer.write_comma();
-        self.2.write(writer)
     }
 }
 
@@ -194,6 +190,14 @@ where
 {
     type Output = (A::Output, B::Output, C::Output);
     type Row = (A::Output, B::Output, C::Output);
+
+    fn visit(&mut self, out: &mut dyn ProjectionVisitor<D>) -> Result<()> {
+        self.0.visit(out)?;
+        out.separator()?;
+        self.1.visit(out)?;
+        out.separator()?;
+        self.2.visit(out)
+    }
 
     fn map(row: Self::Row) -> Self::Output {
         row
@@ -224,7 +228,7 @@ pub type ColumnSelect<D, T, C> = ProjectedSelect<D, T, Column<C>>;
 
 /// A subquery that can be rendered inside an expression.
 pub trait Subquery<D: Dialect>: Send {
-    fn render(&mut self, writer: &mut SqlWriter<'_, D>) -> Result<()>;
+    fn render(&mut self, writer: &mut Writer<D>) -> Result<()>;
 }
 
 /// A common table expression: `name AS (query)`.
@@ -243,33 +247,13 @@ impl<D: Dialect> Cte<D> {
     }
 
     /// Writes the CTE into the query.
-    pub fn render(&mut self, writer: &mut SqlWriter<'_, D>) -> Result<()> {
+    pub fn render(&mut self, writer: &mut Writer<D>) -> Result<()> {
         writer.push_ident(&self.name);
         writer.push(" AS (");
         self.query.render(writer)?;
         writer.push(")");
         Ok(())
     }
-}
-
-pub(crate) fn write_ctes<D: Dialect>(
-    writer: &mut SqlWriter<'_, D>,
-    ctes: &mut [Cte<D>],
-) -> Result<()> {
-    if ctes.is_empty() {
-        return Ok(());
-    }
-
-    writer.push("WITH ");
-    for (index, cte) in ctes.iter_mut().enumerate() {
-        if index > 0 {
-            writer.write_comma();
-        }
-        cte.render(writer)?;
-    }
-    writer.write_space();
-
-    Ok(())
 }
 
 impl<D, T, P> ProjectedSelect<D, T, P>
@@ -369,21 +353,15 @@ where
         Ok(rows.pop())
     }
 
-    /// Executes the query.
-    pub async fn exec(mut self) -> Result<Vec<P::Output>>
-    where
-        P::Row: for<'r> FromRow<'r, <D::DB as Database>::Row>,
-        <D::DB as Database>::Arguments: sqlx_core::arguments::IntoArguments<D::DB>,
-        for<'c> &'c mut <D::DB as Database>::Connection: Executor<'c, Database = D::DB>,
-    {
-        self.ensure_no_dropped_includes()?;
-        let mut writer = SqlWriter::new(self.db.dialect());
-        write_ctes(&mut writer, &mut self.ctes)?;
+    /// Renders this query with the dialect's renderer without executing it.
+    pub fn render(&mut self) -> Result<(String, <D::DB as Database>::Arguments)> {
+        let mut writer = self.db.writer();
         D::Select::default().write(
             SelectPlan {
                 table: self.source,
                 distinct: self.distinct,
                 projection: &mut self.projection,
+                ctes: &mut self.ctes,
                 filters: &mut self.filters,
                 joins: &mut self.joins,
                 groups: &mut self.groups,
@@ -395,8 +373,18 @@ where
             },
             &mut writer,
         )?;
+        Ok(writer.finish())
+    }
 
-        let (sql, arguments) = writer.finish();
+    /// Executes the query.
+    pub async fn exec(mut self) -> Result<Vec<P::Output>>
+    where
+        P::Row: for<'r> FromRow<'r, <D::DB as Database>::Row>,
+        <D::DB as Database>::Arguments: sqlx_core::arguments::IntoArguments<D::DB>,
+        for<'c> &'c mut <D::DB as Database>::Connection: Executor<'c, Database = D::DB>,
+    {
+        self.ensure_no_dropped_includes()?;
+        let (sql, arguments) = self.render()?;
         let rows: Vec<P::Row> =
             query_as_with::<D::DB, P::Row, _>(AssertSqlSafe(sql).into_sql_str(), arguments)
                 .fetch_all(self.db.pool())
@@ -416,26 +404,7 @@ where
         for<'c> &'c mut <D::DB as Database>::Connection: Executor<'c, Database = D::DB>,
     {
         self.ensure_no_dropped_includes()?;
-        let mut writer = SqlWriter::new(self.db.dialect());
-        write_ctes(&mut writer, &mut self.ctes)?;
-        D::Select::default().write(
-            SelectPlan {
-                table: self.source,
-                distinct: self.distinct,
-                projection: &mut self.projection,
-                filters: &mut self.filters,
-                joins: &mut self.joins,
-                groups: &mut self.groups,
-                having: &mut self.having,
-                orders: &mut self.orders,
-                limit: self.limit,
-                offset: self.offset,
-                tail: self.tail,
-            },
-            &mut writer,
-        )?;
-
-        let (sql, arguments) = writer.finish();
+        let (sql, arguments) = self.render()?;
         let rows: Vec<P::Row> =
             query_as_with::<D::DB, P::Row, _>(AssertSqlSafe(sql).into_sql_str(), arguments)
                 .fetch_all(tx.connection())
@@ -481,13 +450,13 @@ where
         for<'c> &'c mut <D::DB as Database>::Connection: Executor<'c, Database = D::DB>,
     {
         self.ensure_no_dropped_includes()?;
-        let mut writer = SqlWriter::new(self.db.dialect());
-        write_ctes(&mut writer, &mut self.ctes)?;
+        let mut writer = self.db.writer();
         D::Select::default().write_count(
             SelectPlan {
                 table: self.source,
                 distinct: self.distinct,
                 projection: &mut self.projection,
+                ctes: &mut self.ctes,
                 filters: &mut self.filters,
                 joins: &mut self.joins,
                 groups: &mut self.groups,
@@ -516,12 +485,13 @@ where
     T: Table + 'static,
     P: Projection<D>,
 {
-    fn render(&mut self, writer: &mut SqlWriter<'_, D>) -> Result<()> {
+    fn render(&mut self, writer: &mut Writer<D>) -> Result<()> {
         D::Select::default().write(
             SelectPlan {
                 table: self.source,
                 distinct: self.distinct,
                 projection: &mut self.projection,
+                ctes: &mut self.ctes,
                 filters: &mut self.filters,
                 joins: &mut self.joins,
                 groups: &mut self.groups,
@@ -533,37 +503,6 @@ where
             },
             writer,
         )
-    }
-}
-
-/// Projections that support `COUNT(expr)` and `COUNT(DISTINCT expr)`.
-pub trait CountProjection<D: Dialect>: Projection<D> {
-    fn write_count(&mut self, writer: &mut SqlWriter<'_, D>, distinct: bool) -> Result<()>;
-}
-
-impl<D: Dialect, C: Send + Unpin> CountProjection<D> for Column<C> {
-    fn write_count(&mut self, writer: &mut SqlWriter<'_, D>, distinct: bool) -> Result<()> {
-        writer.write_count_start(distinct);
-        writer.write_group_start();
-        if distinct {
-            writer.push("DISTINCT ");
-        }
-        self.write(writer)?;
-        writer.write_group_end();
-        Ok(())
-    }
-}
-
-impl<D: Dialect, C: Send + Unpin> CountProjection<D> for Expr<C, D> {
-    fn write_count(&mut self, writer: &mut SqlWriter<'_, D>, distinct: bool) -> Result<()> {
-        writer.write_count_start(distinct);
-        writer.write_group_start();
-        if distinct {
-            writer.push("DISTINCT ");
-        }
-        self.write(writer)?;
-        writer.write_group_end();
-        Ok(())
     }
 }
 
@@ -791,18 +730,13 @@ impl<T> Column<T> {
         self.expr::<D>().not_in_list(values)
     }
 
-    pub(crate) fn render_column<D: Dialect>(&self, writer: &mut SqlWriter<'_, D>) {
-        if let Some(alias) = self.alias {
-            writer.push_ident(alias);
-        } else {
-            if let Some(schema) = self.schema {
-                writer.push_ident(schema);
-                writer.write_identifier_separator();
-            }
-            writer.push_ident(self.table);
+    pub(crate) fn column_ref(&self) -> ColumnRef {
+        ColumnRef {
+            schema: self.schema.map(str::to_owned),
+            table: self.table.to_owned(),
+            alias: self.alias.map(str::to_owned),
+            column: self.column.to_owned(),
         }
-        writer.write_identifier_separator();
-        writer.push_ident(self.column);
     }
 
     /// Tests whether the column is in a subquery result.
@@ -978,22 +912,16 @@ impl<D: Dialect + Clone, T: Table + 'static> Select<D, T> {
         self
     }
 
-    /// Executes the query.
-    pub async fn exec(mut self) -> Result<Vec<T>>
-    where
-        T: Table + Send + Unpin + for<'r> FromRow<'r, <D::DB as Database>::Row>,
-        <D::DB as Database>::Arguments: sqlx_core::arguments::IntoArguments<D::DB>,
-        for<'c> &'c mut <D::DB as Database>::Connection: Executor<'c, Database = D::DB>,
-    {
-        let mut writer = SqlWriter::new(self.db.dialect());
-        write_ctes(&mut writer, &mut self.ctes)?;
+    /// Renders this query with the dialect's renderer without executing it.
+    pub fn render(&mut self) -> Result<(String, <D::DB as Database>::Arguments)> {
+        let mut writer = self.db.writer();
         let mut projection = StarProjection;
-
         D::Select::default().write(
             SelectPlan {
                 table: self.source,
                 distinct: self.distinct,
                 projection: &mut projection,
+                ctes: &mut self.ctes,
                 filters: &mut self.filters,
                 joins: &mut self.joins,
                 groups: &mut [],
@@ -1005,8 +933,17 @@ impl<D: Dialect + Clone, T: Table + 'static> Select<D, T> {
             },
             &mut writer,
         )?;
+        Ok(writer.finish())
+    }
 
-        let (sql, arguments) = writer.finish();
+    /// Executes the query.
+    pub async fn exec(mut self) -> Result<Vec<T>>
+    where
+        T: Table + Send + Unpin + for<'r> FromRow<'r, <D::DB as Database>::Row>,
+        <D::DB as Database>::Arguments: sqlx_core::arguments::IntoArguments<D::DB>,
+        for<'c> &'c mut <D::DB as Database>::Connection: Executor<'c, Database = D::DB>,
+    {
+        let (sql, arguments) = self.render()?;
         let mut rows: Vec<T> =
             query_as_with::<D::DB, T, _>(AssertSqlSafe(sql).into_sql_str(), arguments)
                 .fetch_all(self.db.pool())
@@ -1026,28 +963,7 @@ impl<D: Dialect + Clone, T: Table + 'static> Select<D, T> {
         <D::DB as Database>::Arguments: sqlx_core::arguments::IntoArguments<D::DB>,
         for<'c> &'c mut <D::DB as Database>::Connection: Executor<'c, Database = D::DB>,
     {
-        let mut writer = SqlWriter::new(self.db.dialect());
-        write_ctes(&mut writer, &mut self.ctes)?;
-        let mut projection = StarProjection;
-
-        D::Select::default().write(
-            SelectPlan {
-                table: self.source,
-                distinct: self.distinct,
-                projection: &mut projection,
-                filters: &mut self.filters,
-                joins: &mut self.joins,
-                groups: &mut [],
-                having: &mut [],
-                orders: &mut self.orders,
-                limit: self.limit,
-                offset: self.offset,
-                tail: self.tail,
-            },
-            &mut writer,
-        )?;
-
-        let (sql, arguments) = writer.finish();
+        let (sql, arguments) = self.render()?;
         let mut rows: Vec<T> =
             query_as_with::<D::DB, T, _>(AssertSqlSafe(sql).into_sql_str(), arguments)
                 .fetch_all(tx.connection())
@@ -1069,14 +985,14 @@ impl<D: Dialect + Clone, T: Table + 'static> Select<D, T> {
         <D::DB as Database>::Arguments: sqlx_core::arguments::IntoArguments<D::DB>,
         for<'c> &'c mut <D::DB as Database>::Connection: Executor<'c, Database = D::DB>,
     {
-        let mut writer = SqlWriter::new(self.db.dialect());
-        write_ctes(&mut writer, &mut self.ctes)?;
+        let mut writer = self.db.writer();
         D::Select::default().write_count_star(
             CountPlan {
                 table: self.source,
                 distinct: self.distinct,
                 filters: &mut self.filters,
                 joins: &mut self.joins,
+                ctes: &mut self.ctes,
                 tail: self.tail,
             },
             &mut writer,

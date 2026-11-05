@@ -11,10 +11,11 @@ use sqlx_core::query_as::query_as_with;
 use sqlx_core::sql_str::{AssertSqlSafe, SqlSafeStr};
 
 use crate::exec::{Db, Transaction};
+use crate::plan::backend::{Dialect, SupportsReturning};
+use crate::plan::expr::Expr;
 use crate::plan::join::TableSource;
 use crate::plan::query::{DeletePlan, DeleteRenderer};
 use crate::schema::Table;
-use crate::sql::{Dialect, Expr, SqlWriter, SupportsReturning};
 
 /// A pending `DELETE`.
 pub struct Delete<D: Dialect + Clone, T: Table> {
@@ -102,7 +103,7 @@ impl<D: Dialect + Clone, T: Table> Delete<D, T> {
     }
 
     fn render(&mut self, returning: bool) -> Result<(String, <D::DB as Database>::Arguments)> {
-        let mut writer = SqlWriter::new(self.db.dialect());
+        let mut writer = self.db.writer();
         D::Delete::default().write(
             DeletePlan {
                 table: self.source,

@@ -11,10 +11,11 @@ use sqlx_core::query_as::query_as_with;
 use sqlx_core::sql_str::{AssertSqlSafe, SqlSafeStr};
 
 use crate::exec::{Db, Transaction};
+use crate::plan::backend::{Dialect, SupportsReturning};
+use crate::plan::expr::{Expr, IntoExpr};
 use crate::plan::join::TableSource;
 use crate::plan::query::{Column, UpdatePlan, UpdateRenderer};
 use crate::schema::Table;
-use crate::sql::{Dialect, Expr, IntoExpr, SqlWriter, SupportsReturning};
 
 /// A pending `UPDATE`.
 pub struct Update<D: Dialect + Clone, T: Table> {
@@ -128,7 +129,7 @@ impl<D: Dialect + Clone, T: Table> Update<D, T> {
             ));
         }
 
-        let mut writer = SqlWriter::new(self.db.dialect());
+        let mut writer = self.db.writer();
         D::Update::default().write(
             UpdatePlan {
                 table: self.source,

@@ -5,8 +5,8 @@ use std::pin::Pin;
 
 use sqlx_core::error::Result;
 
+use super::backend::Dialect;
 use crate::exec::{Db, Transaction};
-use crate::sql::Dialect;
 
 /// An eager-loading step applied after the base query has produced rows.
 pub trait Include<D: Dialect + Clone, T>: Send + Sync {

@@ -1,43 +1,17 @@
-//! The SQL text and bound-argument writer.
+//! SQL spelling helpers for the neutral command writer.
 
-use sqlx_core::arguments::Arguments;
-use sqlx_core::database::Database;
-use sqlx_core::encode::Encode;
-use sqlx_core::error::Error;
-use sqlx_core::types::Type;
+use super::syntax::SqlDialect;
+pub use crate::plan::command::Writer;
 
-use super::syntax::Dialect;
+/// Compatibility alias for the old name.
+pub type SqlWriter<D> = Writer<D>;
 
-/// A writer for SQL text plus bound arguments.
-pub struct SqlWriter<'a, D: Dialect> {
-    sql: String,
-    arguments: <D::DB as Database>::Arguments,
-    dialect: &'a D,
-}
-
-impl<'a, D: Dialect> SqlWriter<'a, D> {
-    pub fn new(dialect: &'a D) -> Self {
-        Self {
-            sql: String::new(),
-            arguments: <D::DB as Database>::Arguments::default(),
-            dialect,
-        }
-    }
-
-    pub fn push(&mut self, sql: &str) {
-        self.sql.push_str(sql);
-    }
-
-    pub fn push_ident(&mut self, ident: &str) {
-        let quoted = self.dialect.quote_ident(ident);
-        self.sql.push_str(&quoted);
-    }
-
+impl<D: SqlDialect> Writer<D> {
     pub fn push_limit_offset(&mut self, has_order: bool, limit: Option<u64>, offset: Option<u64>) {
         let mut suffix = String::new();
-        self.dialect
+        self.dialect()
             .write_limit_offset(has_order, limit, offset, &mut suffix);
-        self.sql.push_str(&suffix);
+        self.push(&suffix);
     }
 
     pub fn write_select(&mut self, distinct: bool) {
@@ -161,11 +135,13 @@ impl<'a, D: Dialect> SqlWriter<'a, D> {
     }
 
     pub fn write_source_suffix(&mut self, suffix: &str) {
-        self.dialect.write_source_suffix(suffix, self);
+        let dialect = self.dialect().clone();
+        dialect.write_source_suffix(suffix, self);
     }
 
     pub fn write_tail(&mut self, tail: &str) {
-        self.dialect.write_tail(tail, self);
+        let dialect = self.dialect().clone();
+        dialect.write_tail(tail, self);
     }
 
     pub fn write_operator(&mut self, operator: &str) {
@@ -206,24 +182,5 @@ impl<'a, D: Dialect> SqlWriter<'a, D> {
 
     pub fn write_space(&mut self) {
         D::write_space(self);
-    }
-
-    pub fn bind<T>(&mut self, value: T) -> Result<(), Error>
-    where
-        T: for<'q> Encode<'q, D::DB> + Type<D::DB>,
-    {
-        self.arguments.add(value).map_err(Error::Encode)?;
-        self.arguments
-            .format_placeholder(&mut self.sql)
-            .map_err(|error| Error::Encode(Box::new(error)))?;
-        Ok(())
-    }
-
-    pub fn finish(self) -> (String, <D::DB as Database>::Arguments) {
-        (self.sql, self.arguments)
-    }
-
-    pub fn dialect(&self) -> &D {
-        self.dialect
     }
 }

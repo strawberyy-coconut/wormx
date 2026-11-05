@@ -13,9 +13,10 @@ use sqlx_core::sql_str::{AssertSqlSafe, SqlSafeStr};
 use sqlx_core::transaction::Transaction as SqlxTransaction;
 use sqlx_core::types::Type;
 
+use crate::plan::backend::{Dialect, SupportsUpsert};
+use crate::plan::command::Writer;
 use crate::plan::dml::{Delete, Insert, Update, Upsert};
 use crate::plan::query::{IntoSelect, Select};
-use crate::sql::{Dialect, SupportsUpsert};
 
 /// A database handle that pairs a SQLx pool with a wormx dialect.
 ///
@@ -48,6 +49,11 @@ impl<D: Dialect + Clone> Db<D> {
     /// Returns the dialect.
     pub fn dialect(&self) -> &D {
         &self.dialect
+    }
+
+    /// Creates a query writer for this database's dialect.
+    pub fn writer(&self) -> Writer<D> {
+        Writer::new(self.dialect.clone())
     }
 
     /// Starts a typed query using this database's dialect.

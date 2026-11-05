@@ -11,9 +11,10 @@ use sqlx_core::query_as::query_as_with;
 use sqlx_core::sql_str::{AssertSqlSafe, SqlSafeStr};
 
 use crate::exec::{Db, Transaction};
+use crate::plan::backend::{Dialect, SupportsReturning};
+use crate::plan::expr::{Expr, IntoExpr};
 use crate::plan::query::{Column, InsertPlan, InsertRenderer};
 use crate::schema::Table;
-use crate::sql::{Dialect, Expr, IntoExpr, SqlWriter, SupportsReturning};
 
 /// A pending `INSERT`.
 pub struct Insert<D: Dialect + Clone, T: Table> {
@@ -114,7 +115,7 @@ impl<D: Dialect + Clone, T: Table> Insert<D, T> {
     }
 
     fn render(&mut self, returning: bool) -> Result<(String, <D::DB as Database>::Arguments)> {
-        let mut writer = SqlWriter::new(self.db.dialect());
+        let mut writer = self.db.writer();
         D::Insert::default().write(
             InsertPlan {
                 table: T::DEF,

@@ -8,18 +8,19 @@
 
 pub use sqlx;
 pub use wormx_core::{
-    BelongsTo, BelongsToRef, BindExpr, Column, ColumnDef, ColumnExpr, Config, ConfigError,
-    CountPlan, CountProjection, Cte, Db, Deferred, Delete, DeletePlan, DeleteRenderer, Dialect,
-    Expr, Filtered, Fixity, Function, FunctionArgs, Get, HasMany, HasManyRef, Include, Insert,
-    InsertPlan, InsertRenderer, IntoExpr, IntoSelect, Join, JoinKind, JoinSource, Operator,
-    OperatorExpr, OptionalBelongsToRef, ProjectedSelect, Projection, ProjectionWriter, Query,
-    RawQuery, RelationDef, RelationKind, RenderExpr, Scalar, Select, SelectPlan, SelectRenderer,
-    SqlDelete, SqlInsert, SqlSelect, SqlSyntax, SqlUpdate, SqlUpsert, SqlWriter, StarProjection,
-    Subquery, SupportsArrays, SupportsFullJoin, SupportsFullTextSearch, SupportsJson,
-    SupportsReturning, SupportsUpsert, Table, TableDef, TableRef, TableRefError, TableSource,
-    Textual, Transaction, Update, UpdatePlan, UpdateRenderer, Upsert, UpsertPlan, UpsertRenderer,
-    Window, call, coalesce, count_star, dense_rank, rank, row_number, write_filters,
-    write_from_filters, write_groups_having, write_orders, write_tail,
+    BelongsTo, BelongsToRef, BindValue, Column, ColumnDef, ColumnExpr, ColumnRef, Config,
+    ConfigError, CountPlan, CountProjection, Cte, CustomNode, Db, Deferred, Delete, DeletePlan,
+    DeleteRenderer, Dialect, Expr, ExprKind, Filtered, Fixity, Function, FunctionArgs, Get,
+    HasMany, HasManyRef, Include, Insert, InsertPlan, InsertRenderer, IntoExpr, IntoSelect, Join,
+    JoinKind, JoinSource, LogicalOp, Operator, OperatorExpr, OptionalBelongsToRef, Order,
+    ProjectedSelect, Projection, ProjectionVisitor, Query, RawQuery, RelationDef, RelationKind,
+    Scalar, Select, SelectPlan, SelectRenderer, SqlDelete, SqlDialect, SqlInsert, SqlSelect,
+    SqlSyntax, SqlUpdate, SqlUpsert, SqlWriter, StarProjection, Subquery, SupportsArrays,
+    SupportsFullJoin, SupportsFullTextSearch, SupportsJson, SupportsReturning, SupportsUpsert,
+    Table, TableDef, TableRef, TableRefError, TableSource, Textual, Transaction, Update,
+    UpdatePlan, UpdateRenderer, Upsert, UpsertPlan, UpsertRenderer, Window, Writer, call, coalesce,
+    count_star, dense_rank, rank, row_number, write_ctes, write_filters, write_from_filters,
+    write_groups_having, write_orders, write_projection, write_tail,
 };
 
 #[cfg(any(

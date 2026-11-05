@@ -208,7 +208,7 @@ impl UpsertRenderer<MssqlDialect> for MssqlUpsert {
     fn write(
         &self,
         plan: UpsertPlan<'_, MssqlDialect>,
-        writer: &mut SqlWriter<'_, MssqlDialect>,
+        writer: &mut SqlWriter<MssqlDialect>,
     ) -> Result<()> {
         if plan.conflict_columns.is_empty() {
             return Err(Error::InvalidArgument(
@@ -287,7 +287,7 @@ impl UpsertRenderer<MssqlDialect> for MssqlUpsert {
     }
 }
 
-fn push_table(writer: &mut SqlWriter<'_, MssqlDialect>, table: &wormx_core::TableDef) {
+fn push_table(writer: &mut SqlWriter<MssqlDialect>, table: &wormx_core::TableDef) {
     if let Some(schema) = table.schema {
         writer.push_ident(schema);
         writer.write_identifier_separator();
@@ -295,7 +295,7 @@ fn push_table(writer: &mut SqlWriter<'_, MssqlDialect>, table: &wormx_core::Tabl
     writer.push_ident(table.name);
 }
 
-fn push_qualified(writer: &mut SqlWriter<'_, MssqlDialect>, alias: &str, column: &str) {
+fn push_qualified(writer: &mut SqlWriter<MssqlDialect>, alias: &str, column: &str) {
     writer.push_ident(alias);
     writer.write_identifier_separator();
     writer.push_ident(column);
@@ -630,7 +630,7 @@ mod tests {
             false,
         );
 
-        let mut writer = SqlWriter::new(&MssqlDialect);
+        let mut writer = SqlWriter::new(MssqlDialect);
         MssqlUpsert.write(plan, &mut writer).expect("render merge");
         let (sql, _args) = writer.finish();
 
@@ -670,7 +670,7 @@ mod tests {
             true,
         );
 
-        let mut writer = SqlWriter::new(&MssqlDialect);
+        let mut writer = SqlWriter::new(MssqlDialect);
         MssqlUpsert.write(plan, &mut writer).expect("render merge");
         let (sql, _args) = writer.finish();
 
@@ -679,7 +679,7 @@ mod tests {
 
     #[test]
     fn renders_table_hints_and_options() {
-        let mut writer = SqlWriter::new(&MssqlDialect);
+        let mut writer = SqlWriter::new(MssqlDialect);
         let mut projection = StarProjection;
         let mut filters = Vec::new();
         let mut joins = Vec::new();
@@ -693,6 +693,7 @@ mod tests {
                     table: TableSource::new(&TABLE, None).with_suffix("ROWLOCK, READPAST"),
                     distinct: false,
                     projection: &mut projection,
+                    ctes: &mut [],
                     filters: &mut filters,
                     joins: &mut joins,
                     groups: &mut groups,
@@ -711,7 +712,7 @@ mod tests {
             "SELECT * FROM [dbo].[wormx_users] WITH (ROWLOCK, READPAST) OPTION (RECOMPILE)"
         );
 
-        let mut writer = SqlWriter::new(&MssqlDialect);
+        let mut writer = SqlWriter::new(MssqlDialect);
         let mut projection = StarProjection;
         let mut filters = Vec::new();
         let mut joins = vec![wormx_core::Join::inner(
@@ -727,6 +728,7 @@ mod tests {
                     table: TableSource::new(&TABLE, None),
                     distinct: false,
                     projection: &mut projection,
+                    ctes: &mut [],
                     filters: &mut filters,
                     joins: &mut joins,
                     groups: &mut groups,
@@ -745,7 +747,7 @@ mod tests {
             "SELECT * FROM [dbo].[wormx_users] JOIN [dbo].[wormx_users] AS [u] WITH (READPAST) ON 1 = 1"
         );
 
-        let mut writer = SqlWriter::new(&MssqlDialect);
+        let mut writer = SqlWriter::new(MssqlDialect);
         let mut filters = Vec::new();
         let mut joins = Vec::new();
         SqlSelect
@@ -755,6 +757,7 @@ mod tests {
                     distinct: false,
                     filters: &mut filters,
                     joins: &mut joins,
+                    ctes: &mut [],
                     tail: Some("RECOMPILE"),
                 },
                 &mut writer,
@@ -766,7 +769,7 @@ mod tests {
             "SELECT COUNT_BIG(*) FROM [dbo].[wormx_users] WITH (ROWLOCK) OPTION (RECOMPILE)"
         );
 
-        let mut writer = SqlWriter::new(&MssqlDialect);
+        let mut writer = SqlWriter::new(MssqlDialect);
         let mut assignments = vec![("name", Expr::<(), MssqlDialect>::raw("?"))];
         let mut filters = Vec::new();
         SqlUpdate
@@ -786,7 +789,7 @@ mod tests {
             "UPDATE [dbo].[wormx_users] WITH (ROWLOCK) SET [name] = ?"
         );
 
-        let mut writer = SqlWriter::new(&MssqlDialect);
+        let mut writer = SqlWriter::new(MssqlDialect);
         let mut filters = Vec::new();
         SqlDelete
             .write(
@@ -817,7 +820,7 @@ mod tests {
             returning: false,
         };
 
-        let mut writer = SqlWriter::new(&MssqlDialect);
+        let mut writer = SqlWriter::new(MssqlDialect);
         MssqlUpsert.write(plan, &mut writer).expect("render merge");
         let (sql, _args) = writer.finish();
         assert!(

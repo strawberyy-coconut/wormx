@@ -1,21 +1,17 @@
 //! SQL dialect traits and generic spelling hooks.
 
-use sqlx_core::database::Database;
-
 use super::writer::SqlWriter;
-use crate::plan::query::{
-    DeleteRenderer, InsertRenderer, SelectRenderer, UpdateRenderer, UpsertRenderer,
-};
+use crate::plan::backend::Dialect;
 
 /// Generic SQL spelling hooks used by the built-in renderers.
 ///
-/// `Dialect` stays intentionally small: it identifies the database and chooses
-/// renderers. This trait holds the spelling defaults that most SQL dialects
-/// share. A driver implements it only when its syntax differs from the default.
+/// The neutral [`Dialect`] identifies the database and chooses renderers; this
+/// trait adds the SQL spelling defaults that most SQL dialects share. A driver
+/// implements it only when its syntax differs from the default.
 ///
-/// The methods use [`SqlWriter`] and therefore require `Self: Dialect` at the
-/// call site. Core's `Dialect` supertrait relationship supplies that bound.
-pub trait SqlSyntax: 'static + Sized + Send + Sync {
+/// The methods use [`SqlWriter`], which is available once `Self` is a
+/// [`Dialect`].
+pub trait SqlSyntax: Dialect + 'static + Sized + Send + Sync {
     /// Appends the dialect's LIMIT/OFFSET syntax.
     fn write_limit_offset(
         &self,
@@ -104,8 +100,7 @@ pub trait SqlSyntax: 'static + Sized + Send + Sync {
     where
         Self: Dialect,
     {
-        writer.push(" RETURNING ");
-        writer.write_star();
+        writer.push(" RETURNING *");
     }
 
     fn write_on_conflict(writer: &mut SqlWriter<Self>)
@@ -286,14 +281,14 @@ pub trait SqlSyntax: 'static + Sized + Send + Sync {
     where
         Self: Dialect,
     {
-        writer.write_space();
+        writer.push(" ");
         writer.push(operator);
-        writer.write_space();
+        writer.push(" ");
     }
 
     /// Writes the `NOT` keyword without an opening parenthesis.
     ///
-    /// [`crate::sql::expr::NotExpr`] writes the parentheses around the operand,
+    /// [`crate::plan::expr::ExprKind::Not`] writes the parentheses around the operand,
     /// so implementations must not include `(` in this hook.
     fn write_not(writer: &mut SqlWriter<Self>)
     where
@@ -359,49 +354,14 @@ pub trait SqlSyntax: 'static + Sized + Send + Sync {
     }
 }
 
-/// A backend dialect.
+/// A [`Dialect`] whose query language is SQL and therefore uses [`SqlSyntax`]
+/// spelling hooks.
 ///
-/// `Dialect` identifies the database and chooses one renderer per operation.
-/// Generic SQL spelling lives in [`SqlSyntax`]; dialect-specific syntax that is
-/// not covered there belongs in that driver's renderers or extension traits.
-pub trait Dialect: SqlSyntax + Clone {
-    type DB: Database;
+/// A Cypher or document backend implements [`Dialect`] directly and supplies
+/// its own renderers; it does not need to implement `SqlSyntax`.
+pub trait SqlDialect: Dialect + SqlSyntax {}
 
-    /// The renderer used for `SELECT` operations.
-    type Select: SelectRenderer<Self>;
-    /// The renderer used for `INSERT` operations.
-    type Insert: InsertRenderer<Self>;
-    /// The renderer used for `UPDATE` operations.
-    type Update: UpdateRenderer<Self>;
-    /// The renderer used for `DELETE` operations.
-    type Delete: DeleteRenderer<Self>;
-    /// The renderer used for `UPSERT` operations.
-    type Upsert: UpsertRenderer<Self>;
-
-    fn quote_ident(&self, name: &str) -> String;
-}
-
-/// Marks a dialect that supports `RETURNING`.
-///
-/// This gates the `exec_returning` methods on the DML builders, so a dialect
-/// without `RETURNING` rejects them at compile time.
-pub trait SupportsReturning: Dialect {}
-/// Marks a dialect that supports `FULL [OUTER] JOIN`.
-///
-/// This gates [`crate::plan::join::Join::full`] at compile time. MySQL and MariaDB
-/// do not implement it.
-pub trait SupportsFullJoin: Dialect {}
-/// Marks a dialect that supports full-text search.
-pub trait SupportsFullTextSearch: Dialect {}
-/// Marks a dialect that supports JSON values.
-pub trait SupportsJson: Dialect {}
-/// Marks a dialect that supports array values.
-pub trait SupportsArrays: Dialect {}
-/// Marks a dialect that supports upserts.
-///
-/// This gates [`crate::exec::db::Db::upsert`] and
-/// [`crate::exec::db::Transaction::upsert`].
-pub trait SupportsUpsert: Dialect {}
+impl<D: Dialect + SqlSyntax> SqlDialect for D {}
 
 /// Rust types that can be treated as textual SQL expressions.
 pub trait Textual {}
