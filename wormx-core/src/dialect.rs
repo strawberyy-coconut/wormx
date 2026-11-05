@@ -238,17 +238,35 @@ pub trait Dialect: 'static + Sized + Send + Sync + Clone {
         writer.push("COUNT(*)");
     }
 
-    fn write_count_start(distinct: bool, writer: &mut SqlWriter<Self>) {
-        writer.push("COUNT(");
-        if distinct {
-            writer.push("DISTINCT ");
-        }
+    /// Writes the name of the `COUNT` function, without its opening parenthesis.
+    ///
+    /// The renderer writes the opening parenthesis and any `DISTINCT` keyword
+    /// itself, so implementations must not include `(` in this hook.
+    fn write_count_start(_distinct: bool, writer: &mut SqlWriter<Self>) {
+        writer.push("COUNT");
     }
 
+    /// Writes a function name, without its opening parenthesis.
+    ///
+    /// The caller writes the argument list parentheses, so implementations must
+    /// not include `(` in this hook.
     fn write_function_start(name: &str, writer: &mut SqlWriter<Self>) {
         writer.push(name);
-        writer.write_group_start();
     }
+
+    /// Writes an optional table hint attached to a `FROM`, `JOIN`, `UPDATE`,
+    /// `DELETE`, or `UPSERT` target.
+    ///
+    /// The default emits nothing, so dialects that do not support table hints
+    /// ignore them. Dialects that do support them should add their own wrapper,
+    /// for example SQL Server's `WITH (...)`.
+    fn write_table_hint(&self, _hints: &str, _writer: &mut SqlWriter<Self>) {}
+
+    /// Writes a trailing statement-level options clause.
+    ///
+    /// The default emits nothing so dialects that do not support `OPTION (...)`
+    /// ignore it. SQL Server overrides this to write ` OPTION (<options>)`.
+    fn write_options(&self, _options: &str, _writer: &mut SqlWriter<Self>) {}
 
     fn write_operator(operator: &str, writer: &mut SqlWriter<Self>) {
         writer.write_space();
@@ -256,8 +274,12 @@ pub trait Dialect: 'static + Sized + Send + Sync + Clone {
         writer.write_space();
     }
 
+    /// Writes the `NOT` keyword without an opening parenthesis.
+    ///
+    /// [`NotExpr`] writes the parentheses around the operand, so implementations
+    /// must not include `(` in this hook.
     fn write_not(writer: &mut SqlWriter<Self>) {
-        writer.push("NOT (");
+        writer.push("NOT ");
     }
 
     fn write_in(negated: bool, writer: &mut SqlWriter<Self>) {
@@ -463,6 +485,14 @@ impl<'a, D: Dialect> SqlWriter<'a, D> {
         D::write_function_start(name, self);
     }
 
+    pub fn write_table_hint(&mut self, hints: &str) {
+        self.dialect.write_table_hint(hints, self);
+    }
+
+    pub fn write_options(&mut self, options: &str) {
+        self.dialect.write_options(options, self);
+    }
+
     pub fn write_operator(&mut self, operator: &str) {
         D::write_operator(operator, self);
     }
@@ -575,6 +605,11 @@ impl<T, D: Dialect> Expr<T, D> {
         Self::new(BindExpr { value })
     }
 
+    /// Places a bound value where the builder has no typed method.
+    ///
+    /// This is the composition-safe alternative to [`Expr::raw`] for values.
+    /// The value is encoded and rendered as a placeholder, so it cannot change
+    /// the SQL text.
     pub fn bind(value: T) -> Self
     where
         T: Clone + for<'q> Encode<'q, D::DB> + Type<D::DB> + Send + 'static,
@@ -591,6 +626,7 @@ impl<T, D: Dialect> Expr<T, D> {
             left: left.into_node(),
             operator,
             right: right.into_node(),
+            group_operands: true,
         })
     }
 
@@ -661,6 +697,25 @@ impl<T, D: Dialect> Expr<T, D> {
             left: left.into_node(),
             operator,
             right: right.into_node(),
+            group_operands: true,
+        })
+    }
+
+    /// Like [`Expr::infix`], but without implicit operand parentheses.
+    ///
+    /// This is the escape hatch used by `operator! { grouping = None; }`.
+    /// Prefer [`Expr::infix`] unless the operator's SQL grammar forbids the
+    /// extra parentheses.
+    pub fn infix_ungrouped<L, R>(
+        left: Expr<L, D>,
+        operator: &'static str,
+        right: Expr<R, D>,
+    ) -> Self {
+        Self::new(BinaryExpr {
+            left: left.into_node(),
+            operator,
+            right: right.into_node(),
+            group_operands: false,
         })
     }
 
@@ -668,6 +723,16 @@ impl<T, D: Dialect> Expr<T, D> {
         Self::new(PrefixExpr {
             operator,
             operand: operand.into_node(),
+            group_operand: true,
+        })
+    }
+
+    /// Like [`Expr::prefix`], but without implicit operand parentheses.
+    pub fn prefix_ungrouped(operator: &'static str, operand: Expr<(), D>) -> Self {
+        Self::new(PrefixExpr {
+            operator,
+            operand: operand.into_node(),
+            group_operand: false,
         })
     }
 
@@ -675,9 +740,46 @@ impl<T, D: Dialect> Expr<T, D> {
         Self::new(PostfixExpr {
             operand: operand.into_node(),
             operator,
+            group_operand: true,
         })
     }
 
+    /// Like [`Expr::postfix`], but without implicit operand parentheses.
+    pub fn postfix_ungrouped(operand: Expr<(), D>, operator: &'static str) -> Self {
+        Self::new(PostfixExpr {
+            operand: operand.into_node(),
+            operator,
+            group_operand: false,
+        })
+    }
+
+    /// Wraps this expression in parentheses.
+    ///
+    /// Custom operators and hand-built predicates can use this to make their
+    /// grouping explicit. The built-in operator macros already group their
+    /// operands, so this is only needed when composing raw or third-party
+    /// expression nodes.
+    pub fn group(self) -> Self {
+        Self::new(GroupExpr {
+            operand: self.into_node(),
+        })
+    }
+
+    /// Emits a raw SQL fragment verbatim, without binding it.
+    ///
+    /// This is for SQL literals and database constructs that must stay literal,
+    /// such as a filtered-index predicate (`status <> N'FINISHED'`). Never
+    /// interpolate user input into this string:
+    ///
+    /// ```ignore
+    /// // Injection risk:
+    /// Expr::raw(format!("name = '{input}'"))
+    ///
+    /// // Composition-safe:
+    /// Users::fields().name().eq(input)
+    /// // or, when there is no typed helper:
+    /// Expr::bind(input)
+    /// ```
     pub fn raw(sql: impl Into<String>) -> Self {
         Self::new(RawExpr { sql: sql.into() })
     }
@@ -895,6 +997,21 @@ pub struct NotExpr<D: Dialect> {
 impl<D: Dialect> RenderExpr<D> for NotExpr<D> {
     fn render(&mut self, writer: &mut SqlWriter<'_, D>) -> Result<(), Error> {
         writer.write_not();
+        writer.write_group_start();
+        self.operand.render(writer)?;
+        writer.write_group_end();
+        Ok(())
+    }
+}
+
+/// An explicitly parenthesized expression.
+pub struct GroupExpr<D: Dialect> {
+    operand: Box<dyn RenderExpr<D>>,
+}
+
+impl<D: Dialect> RenderExpr<D> for GroupExpr<D> {
+    fn render(&mut self, writer: &mut SqlWriter<'_, D>) -> Result<(), Error> {
+        writer.write_group_start();
         self.operand.render(writer)?;
         writer.write_group_end();
         Ok(())
@@ -934,6 +1051,10 @@ pub struct CountExpr<D: Dialect> {
 impl<D: Dialect> RenderExpr<D> for CountExpr<D> {
     fn render(&mut self, writer: &mut SqlWriter<'_, D>) -> Result<(), Error> {
         writer.write_count_start(self.distinct);
+        writer.write_group_start();
+        if self.distinct {
+            writer.push("DISTINCT ");
+        }
         self.operand.render(writer)?;
         writer.write_group_end();
         Ok(())
@@ -954,13 +1075,21 @@ pub fn count_star<D: Dialect>() -> Expr<i64, D> {
 pub struct PrefixExpr<D: Dialect> {
     operator: &'static str,
     operand: Box<dyn RenderExpr<D>>,
+    group_operand: bool,
 }
 
 impl<D: Dialect> RenderExpr<D> for PrefixExpr<D> {
     fn render(&mut self, writer: &mut SqlWriter<'_, D>) -> Result<(), Error> {
         writer.push(self.operator);
         writer.write_space();
-        self.operand.render(writer)
+        if self.group_operand {
+            writer.write_group_start();
+        }
+        self.operand.render(writer)?;
+        if self.group_operand {
+            writer.write_group_end();
+        }
+        Ok(())
     }
 }
 
@@ -968,11 +1097,18 @@ impl<D: Dialect> RenderExpr<D> for PrefixExpr<D> {
 pub struct PostfixExpr<D: Dialect> {
     operand: Box<dyn RenderExpr<D>>,
     operator: &'static str,
+    group_operand: bool,
 }
 
 impl<D: Dialect> RenderExpr<D> for PostfixExpr<D> {
     fn render(&mut self, writer: &mut SqlWriter<'_, D>) -> Result<(), Error> {
+        if self.group_operand {
+            writer.write_group_start();
+        }
         self.operand.render(writer)?;
+        if self.group_operand {
+            writer.write_group_end();
+        }
         writer.write_space();
         writer.push(self.operator);
         Ok(())
@@ -988,6 +1124,7 @@ pub struct FunctionCallExpr<D: Dialect> {
 impl<D: Dialect> RenderExpr<D> for FunctionCallExpr<D> {
     fn render(&mut self, writer: &mut SqlWriter<'_, D>) -> Result<(), Error> {
         writer.write_function_start(self.name);
+        writer.write_group_start();
         for (index, arg) in self.args.iter_mut().enumerate() {
             if index > 0 {
                 writer.write_comma();
@@ -1004,13 +1141,27 @@ pub struct BinaryExpr<D: Dialect> {
     left: Box<dyn RenderExpr<D>>,
     operator: &'static str,
     right: Box<dyn RenderExpr<D>>,
+    group_operands: bool,
 }
 
 impl<D: Dialect> RenderExpr<D> for BinaryExpr<D> {
     fn render(&mut self, writer: &mut SqlWriter<'_, D>) -> Result<(), Error> {
+        if self.group_operands {
+            writer.write_group_start();
+        }
         self.left.render(writer)?;
+        if self.group_operands {
+            writer.write_group_end();
+        }
         writer.write_operator(self.operator);
-        self.right.render(writer)
+        if self.group_operands {
+            writer.write_group_start();
+        }
+        self.right.render(writer)?;
+        if self.group_operands {
+            writer.write_group_end();
+        }
+        Ok(())
     }
 }
 
@@ -1038,7 +1189,7 @@ pub struct InSubqueryExpr<D: Dialect> {
 impl<D: Dialect> RenderExpr<D> for InSubqueryExpr<D> {
     fn render(&mut self, writer: &mut SqlWriter<'_, D>) -> Result<(), Error> {
         self.left.render(writer)?;
-        writer.push(if self.negated { " NOT IN (" } else { " IN (" });
+        writer.write_in(self.negated);
         self.subquery.render(writer)?;
         writer.write_group_end();
         Ok(())
@@ -1355,6 +1506,20 @@ pub struct OperatorExpr<O: Operator<D>, D: Dialect> {
     _marker: PhantomData<fn() -> (O, D)>,
 }
 
+impl<O: Operator<D>, D: Dialect> OperatorExpr<O, D> {
+    /// Creates an operator expression.
+    ///
+    /// For prefix operators `left` is normally `()`, and for postfix operators
+    /// `right` is normally `()`.
+    pub fn new(left: O::Left, right: O::Right) -> Self {
+        Self {
+            left,
+            right,
+            _marker: PhantomData,
+        }
+    }
+}
+
 impl<O, D> RenderExpr<D> for OperatorExpr<O, D>
 where
     O: Operator<D>,
@@ -1363,17 +1528,27 @@ where
     fn render(&mut self, writer: &mut SqlWriter<'_, D>) -> Result<(), Error> {
         match O::FIXITY {
             Fixity::Infix => {
+                writer.write_group_start();
                 self.left.render(writer)?;
+                writer.write_group_end();
                 writer.write_operator(O::SQL);
-                self.right.render(writer)
+                writer.write_group_start();
+                self.right.render(writer)?;
+                writer.write_group_end();
+                Ok(())
             }
             Fixity::Prefix => {
                 writer.push(O::SQL);
                 writer.write_space();
-                self.right.render(writer)
+                writer.write_group_start();
+                self.right.render(writer)?;
+                writer.write_group_end();
+                Ok(())
             }
             Fixity::Postfix => {
+                writer.write_group_start();
                 self.left.render(writer)?;
+                writer.write_group_end();
                 writer.write_space();
                 writer.push(O::SQL);
                 Ok(())

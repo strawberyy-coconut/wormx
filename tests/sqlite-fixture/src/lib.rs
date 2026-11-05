@@ -14,6 +14,28 @@ wormx::infix_operator! {
     pub fn concat(left: String, right: String) -> String = "||";
 }
 
+wormx::prefix_operator! {
+    pub fn not_(value: bool) -> bool = "NOT";
+}
+
+wormx::operator! {
+    pub fn raw_concat(left: String, right: String) -> String = "||";
+    fixity = Infix;
+    grouping = None;
+}
+
+wormx::operator! {
+    pub fn explicit_not(value: bool) -> bool = "NOT";
+    fixity = Prefix;
+    grouping = Operands;
+}
+
+wormx::operator! {
+    pub fn prec_concat(left: String, right: String) -> String = "||";
+    fixity = Infix;
+    grouping = Precedence(6);
+}
+
 pub fn users_table() -> &'static wormx::TableDef {
     <Users as wormx::Table>::DEF
 }
@@ -70,7 +92,7 @@ mod tests {
         let mut expr = concat(Users::fields().name(), "!");
         expr.render(&mut writer).expect("render operator");
         let (sql, _args) = writer.finish();
-        assert_eq!(sql, "\"users\".\"name\" || ?");
+        assert_eq!(sql, "(\"users\".\"name\") || (?)");
 
         let mut writer = SqlWriter::new(&dialect);
         let mut expr = Users::fields()
@@ -81,6 +103,175 @@ mod tests {
         expr.render(&mut writer).expect("render boolean expression");
         let (sql, _args) = writer.finish();
         assert!(sql.contains(") AND ("), "{sql}");
+    }
+
+    #[test]
+    fn custom_prefix_operator_groups_its_operand() {
+        use wormx::{Expr, SqlWriter, SqliteDialect};
+
+        let dialect = SqliteDialect;
+        let mut writer = SqlWriter::new(&dialect);
+        let mut expr = not_(Expr::<bool, SqliteDialect>::raw("a").and(Expr::raw("b")));
+
+        expr.render(&mut writer).expect("render prefix operator");
+        let (sql, _args) = writer.finish();
+        assert_eq!(sql, "NOT ((a) AND (b))");
+
+        let mut writer = SqlWriter::new(&dialect);
+        let mut expr = explicit_not(Expr::<bool, SqliteDialect>::raw("a"));
+        expr.render(&mut writer).expect("render operator! prefix");
+        let (sql, _args) = writer.finish();
+        assert_eq!(sql, "NOT (a)");
+
+        let mut writer = SqlWriter::new(&dialect);
+        let mut expr = raw_concat(Expr::<String, SqliteDialect>::raw("a"), Expr::raw("b"));
+        expr.render(&mut writer).expect("render ungrouped operator");
+        let (sql, _args) = writer.finish();
+        assert_eq!(sql, "a || b");
+
+        let mut writer = SqlWriter::new(&dialect);
+        let mut expr = prec_concat(Expr::<String, SqliteDialect>::raw("a"), Expr::raw("b"));
+        expr.render(&mut writer)
+            .expect("render precedence operator");
+        let (sql, _args) = writer.finish();
+        assert_eq!(sql, "(a) || (b)");
+    }
+
+    #[test]
+    fn nested_infix_operators_are_grouped_and_expr_group_is_explicit() {
+        use wormx::{Expr, Fixity, Operator, OperatorExpr, SqlWriter, SqliteDialect};
+
+        struct Concat;
+
+        impl Operator<SqliteDialect> for Concat {
+            type Left = Expr<String, SqliteDialect>;
+            type Right = Expr<String, SqliteDialect>;
+            type Output = String;
+            const SQL: &'static str = "||";
+            const FIXITY: Fixity = Fixity::Infix;
+        }
+
+        let dialect = SqliteDialect;
+        let inner =
+            Expr::<i64, SqliteDialect>::infix::<i64, i64>(Expr::raw("b"), "*", Expr::raw("c"));
+        let mut expr = Expr::<i64, SqliteDialect>::infix::<i64, i64>(Expr::raw("a"), "+", inner);
+
+        let mut writer = SqlWriter::new(&dialect);
+        expr.render(&mut writer).expect("render nested operators");
+        let (sql, _args) = writer.finish();
+        assert_eq!(sql, "(a) + ((b) * (c))");
+
+        let mut writer = SqlWriter::new(&dialect);
+        let mut grouped = Expr::<i64, SqliteDialect>::raw("a + b").group();
+        grouped.render(&mut writer).expect("render grouped expr");
+        let (sql, _args) = writer.finish();
+        assert_eq!(sql, "(a + b)");
+
+        let mut writer = SqlWriter::new(&dialect);
+        let mut postfix = Expr::<i64, SqliteDialect>::postfix(Expr::raw("x"), "::int");
+        postfix
+            .render(&mut writer)
+            .expect("render postfix operator");
+        let (sql, _args) = writer.finish();
+        assert_eq!(sql, "(x) ::int");
+
+        let mut writer = SqlWriter::new(&dialect);
+        let mut operator = Expr::<String, SqliteDialect>::new(
+            OperatorExpr::<Concat, SqliteDialect>::new(Expr::raw("a"), Expr::raw("b")),
+        );
+        operator
+            .render(&mut writer)
+            .expect("render custom operator expression");
+        let (sql, _args) = writer.finish();
+        assert_eq!(sql, "(a) || (b)");
+    }
+
+    #[test]
+    fn external_renderer_can_render_joins() {
+        use wormx::{
+            Expr, SelectPlan, SelectRenderer, SqlSelect, SqlWriter, SqliteDialect, Table,
+            TableSource,
+        };
+
+        #[derive(Default)]
+        struct JoinSelect;
+
+        impl SelectRenderer<SqliteDialect> for JoinSelect {
+            fn write<P>(
+                &self,
+                plan: SelectPlan<'_, SqliteDialect, P>,
+                writer: &mut SqlWriter<'_, SqliteDialect>,
+            ) -> sqlx::Result<()>
+            where
+                P: wormx::ProjectionWriter<SqliteDialect>,
+            {
+                writer.write_select(plan.distinct);
+                plan.projection.write(writer)?;
+                wormx::write_from_filters(writer, plan.table, plan.filters, plan.joins)?;
+                wormx::write_groups_having(writer, plan.groups, plan.having)?;
+                wormx::write_orders(writer, plan.orders)?;
+                writer.push_limit_offset(!plan.orders.is_empty(), plan.limit, plan.offset);
+                wormx::write_options(writer, plan.options);
+                Ok(())
+            }
+
+            fn write_count<P>(
+                &self,
+                plan: SelectPlan<'_, SqliteDialect, P>,
+                writer: &mut SqlWriter<'_, SqliteDialect>,
+                distinct: bool,
+            ) -> sqlx::Result<()>
+            where
+                P: wormx::ProjectionWriter<SqliteDialect> + wormx::CountProjection<SqliteDialect>,
+            {
+                SqlSelect.write_count(plan, writer, distinct)
+            }
+
+            fn write_count_star(
+                &self,
+                plan: wormx::CountPlan<'_, SqliteDialect>,
+                writer: &mut SqlWriter<'_, SqliteDialect>,
+            ) -> sqlx::Result<()> {
+                SqlSelect.write_count_star(plan, writer)
+            }
+        }
+
+        let dialect = SqliteDialect;
+        let mut writer = SqlWriter::new(&dialect);
+        let mut projection = wormx::StarProjection;
+        let mut filters = vec![Expr::<bool, SqliteDialect>::raw("1 = 1")];
+        let mut joins = vec![wormx::Join::inner(
+            Todos::alias("t").table(),
+            Users::fields().id().eq(Todos::alias("t").user_id()),
+        )];
+        let mut orders = Vec::new();
+        let mut groups = Vec::new();
+        let mut having = Vec::new();
+
+        JoinSelect
+            .write(
+                SelectPlan {
+                    table: TableSource::new(Users::DEF, None).with_hint("ROWLOCK"),
+                    distinct: false,
+                    projection: &mut projection,
+                    filters: &mut filters,
+                    joins: &mut joins,
+                    groups: &mut groups,
+                    having: &mut having,
+                    orders: &mut orders,
+                    limit: None,
+                    offset: None,
+                    options: Some("RECOMPILE"),
+                },
+                &mut writer,
+            )
+            .expect("render external select renderer");
+
+        let (sql, _args) = writer.finish();
+        assert!(sql.contains(" JOIN "), "{sql}");
+        assert!(sql.contains("\"t\""), "{sql}");
+        assert!(!sql.contains("ROWLOCK"), "{sql}");
+        assert!(!sql.contains("OPTION"), "{sql}");
     }
 
     #[tokio::test]

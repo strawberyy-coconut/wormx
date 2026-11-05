@@ -11,12 +11,88 @@ use crate::query::Subquery;
 pub struct TableSource {
     pub def: &'static TableDef,
     pub alias: Option<&'static str>,
+    /// Dialect-specific table hints, for example `"ROWLOCK, READPAST"`.
+    ///
+    /// The dialect decides the wrapper syntax. Dialects that do not support
+    /// table hints render nothing for this field.
+    pub hints: Option<&'static str>,
 }
 
 impl TableSource {
-    /// Creates a table source with an optional alias.
+    /// Creates a table source with an optional alias and no hints.
     pub const fn new(def: &'static TableDef, alias: Option<&'static str>) -> Self {
-        Self { def, alias }
+        Self {
+            def,
+            alias,
+            hints: None,
+        }
+    }
+
+    /// Attaches raw table hints, for example `"ROWLOCK, READPAST"`, or a typed
+    /// [`TableHint`].
+    pub fn with_hint(mut self, hints: impl Into<&'static str>) -> Self {
+        self.hints = Some(hints.into());
+        self
+    }
+
+    /// Attaches a typed table hint.
+    pub const fn with_table_hint(mut self, hint: TableHint) -> Self {
+        self.hints = Some(hint.as_sql());
+        self
+    }
+
+    /// Writes the table, alias, and any hints.
+    pub fn render<D: Dialect>(&self, writer: &mut SqlWriter<'_, D>) {
+        push_table(writer, self.def.schema, self.def.name);
+        if let Some(alias) = self.alias {
+            writer.write_as();
+            writer.push_ident(alias);
+        }
+        if let Some(hints) = self.hints {
+            writer.write_table_hint(hints);
+        }
+    }
+}
+
+/// A typed table hint for dialects that support them.
+///
+/// Use [`TableHint::Raw`] for hints not modeled here, or to combine several
+/// hints in one string.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TableHint {
+    NoLock,
+    RowLock,
+    ReadPast,
+    UpdLock,
+    HoldLock,
+    TabLock,
+    TabLockX,
+    RepeatableRead,
+    Serializable,
+    Raw(&'static str),
+}
+
+impl TableHint {
+    /// The SQL text of the hint, without a `WITH (...)` wrapper.
+    pub const fn as_sql(self) -> &'static str {
+        match self {
+            Self::NoLock => "NOLOCK",
+            Self::RowLock => "ROWLOCK",
+            Self::ReadPast => "READPAST",
+            Self::UpdLock => "UPDLOCK",
+            Self::HoldLock => "HOLDLOCK",
+            Self::TabLock => "TABLOCK",
+            Self::TabLockX => "TABLOCKX",
+            Self::RepeatableRead => "REPEATABLEREAD",
+            Self::Serializable => "SERIALIZABLE",
+            Self::Raw(sql) => sql,
+        }
+    }
+}
+
+impl From<TableHint> for &'static str {
+    fn from(hint: TableHint) -> Self {
+        hint.as_sql()
     }
 }
 
@@ -125,10 +201,14 @@ impl<D: Dialect> Join<D> {
         }
     }
 
-    pub(crate) fn render(&mut self, writer: &mut SqlWriter<'_, D>) -> Result<()> {
+    /// Writes the join clause.
+    ///
+    /// This is public so an external [`crate::query::SelectRenderer`] can
+    /// reproduce the generic select renderer for joined queries.
+    pub fn render(&mut self, writer: &mut SqlWriter<'_, D>) -> Result<()> {
         writer.write_join(self.kind);
         match &mut self.source {
-            JoinSource::Table(source) => push_source(writer, *source),
+            JoinSource::Table(source) => source.render(writer),
             JoinSource::Derived { query, alias } => {
                 writer.write_group_start();
                 query.render(writer)?;
@@ -140,14 +220,6 @@ impl<D: Dialect> Join<D> {
         }
         writer.write_on();
         self.on.render(writer)
-    }
-}
-
-pub(crate) fn push_source<D: Dialect>(writer: &mut SqlWriter<'_, D>, source: TableSource) {
-    push_table(writer, source.def.schema, source.def.name);
-    if let Some(alias) = source.alias {
-        writer.write_as();
-        writer.push_ident(alias);
     }
 }
 

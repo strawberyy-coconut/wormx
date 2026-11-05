@@ -1,7 +1,9 @@
 //! Microsoft SQL Server support for wormx, built on `sqlx-mssql-rs`.
 
+use sqlx_core::error::Result;
 use wormx_core::{
     Capabilities, Dialect, SqlWriter, SupportsFullTextSearch, SupportsJson, SupportsUpsert,
+    UpsertPlan, UpsertRenderer,
 };
 
 /// The Microsoft SQL Server dialect marker.
@@ -15,7 +17,7 @@ impl Dialect for MssqlDialect {
     type Insert = wormx_core::SqlInsert;
     type Update = wormx_core::SqlUpdate;
     type Delete = wormx_core::SqlDelete;
-    type Upsert = wormx_core::SqlUpsert;
+    type Upsert = MssqlUpsert;
 
     const CAPABILITIES: Capabilities = Capabilities {
         select: true,
@@ -40,11 +42,22 @@ impl Dialect for MssqlDialect {
         writer.push("COUNT_BIG(*)");
     }
 
-    fn write_count_start(distinct: bool, writer: &mut SqlWriter<Self>) {
-        writer.push("COUNT_BIG(");
-        if distinct {
-            writer.push("DISTINCT ");
-        }
+    /// SQL Server spells the count function `COUNT_BIG`; the renderer adds the
+    /// opening parenthesis and the `DISTINCT` keyword.
+    fn write_count_start(_distinct: bool, writer: &mut SqlWriter<Self>) {
+        writer.push("COUNT_BIG");
+    }
+
+    fn write_table_hint(&self, hints: &str, writer: &mut SqlWriter<Self>) {
+        writer.push(" WITH (");
+        writer.push(hints);
+        writer.push(")");
+    }
+
+    fn write_options(&self, options: &str, writer: &mut SqlWriter<Self>) {
+        writer.push(" OPTION (");
+        writer.push(options);
+        writer.push(")");
     }
 
     fn write_limit_offset(
@@ -67,6 +80,104 @@ impl Dialect for MssqlDialect {
             out.push_str(&format!(" FETCH NEXT {limit} ROWS ONLY"));
         }
     }
+}
+
+/// SQL Server upsert renderer using `MERGE ... WITH (HOLDLOCK)`.
+///
+/// `MERGE` has no `ON CONFLICT`/`DO UPDATE` spelling, so this renderer builds a
+/// single `MERGE` statement from the insert values and the update assignments.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct MssqlUpsert;
+
+impl UpsertRenderer<MssqlDialect> for MssqlUpsert {
+    fn write(
+        &self,
+        plan: UpsertPlan<'_, MssqlDialect>,
+        writer: &mut SqlWriter<'_, MssqlDialect>,
+    ) -> Result<()> {
+        writer.push("MERGE INTO ");
+        push_table(writer, plan.table.def);
+
+        // HOLDLOCK makes the MERGE safe under concurrency. If the caller also
+        // supplied hints, keep them without duplicating HOLDLOCK.
+        writer.push(" WITH (HOLDLOCK");
+        if let Some(hints) = plan.table.hints
+            && !hints.trim().is_empty()
+            && !hints.to_ascii_uppercase().contains("HOLDLOCK")
+        {
+            writer.push(", ");
+            writer.push(hints);
+        }
+        writer.push(") AS ");
+        writer.push_ident("target");
+
+        writer.push(" USING (SELECT ");
+        for (index, (column, value)) in plan.columns.iter().zip(plan.values.iter_mut()).enumerate()
+        {
+            if index > 0 {
+                writer.write_comma();
+            }
+            value.render(writer)?;
+            writer.write_as();
+            writer.push_ident(column);
+        }
+        writer.push(") AS ");
+        writer.push_ident("source");
+
+        writer.push(" ON ");
+        for (index, column) in plan.conflict_columns.iter().enumerate() {
+            if index > 0 {
+                writer.push(" AND ");
+            }
+            push_qualified(writer, "target", column);
+            writer.write_equals();
+            push_qualified(writer, "source", column);
+        }
+
+        if !plan.assignments.is_empty() {
+            writer.push(" WHEN MATCHED THEN UPDATE SET ");
+            for (index, (column, value)) in plan.assignments.iter_mut().enumerate() {
+                if index > 0 {
+                    writer.write_comma();
+                }
+                writer.push_ident(column);
+                writer.write_equals();
+                value.render(writer)?;
+            }
+        }
+
+        writer.push(" WHEN NOT MATCHED THEN INSERT (");
+        for (index, column) in plan.columns.iter().enumerate() {
+            if index > 0 {
+                writer.write_comma();
+            }
+            writer.push_ident(column);
+        }
+        writer.push(") VALUES (");
+        for (index, column) in plan.columns.iter().enumerate() {
+            if index > 0 {
+                writer.write_comma();
+            }
+            push_qualified(writer, "source", column);
+        }
+        writer.push(");");
+
+        Ok(())
+    }
+}
+
+fn push_table(writer: &mut SqlWriter<'_, MssqlDialect>, table: &wormx_core::TableDef) {
+    if let Some(schema) = table.schema {
+        writer.push_ident(schema);
+        writer.write_identifier_separator();
+    }
+    writer.push_ident(table.name);
+}
+
+fn push_qualified(writer: &mut SqlWriter<'_, MssqlDialect>, alias: &str, column: &str) {
+    writer.push_ident(alias);
+    writer.write_identifier_separator();
+    writer.push_ident(column);
 }
 
 impl SupportsFullTextSearch for MssqlDialect {}
@@ -325,3 +436,272 @@ mod macros {
 
 #[cfg(feature = "macros")]
 pub use macros::MSSQL;
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use wormx_core::{
+        ColumnDef, DeleteRenderer, Expr, SelectRenderer, SqlDelete, SqlSelect, SqlUpdate,
+        SqlUpsert, StarProjection, TableDef, TableSource, UpdateRenderer, UpsertRenderer,
+    };
+
+    static COLUMNS: &[ColumnDef] = &[
+        ColumnDef {
+            name: "id",
+            sql_type: "bigint",
+            nullable: false,
+            primary_key: true,
+            has_default: false,
+            identity: true,
+            generated: false,
+        },
+        ColumnDef {
+            name: "name",
+            sql_type: "nvarchar",
+            nullable: false,
+            primary_key: false,
+            has_default: false,
+            identity: false,
+            generated: false,
+        },
+    ];
+    static PRIMARY_KEY: &[&str] = &["id"];
+    static TABLE: TableDef = TableDef {
+        name: "wormx_users",
+        schema: Some("dbo"),
+        columns: COLUMNS,
+        primary_key: PRIMARY_KEY,
+        relations: &[],
+    };
+
+    fn upsert_plan<'a>(
+        values: &'a mut [Expr<(), MssqlDialect>],
+        assignments: &'a mut [(&'static str, Expr<(), MssqlDialect>)],
+        columns: &'a [&'static str],
+        conflict_columns: &'a [&'static str],
+        returning: bool,
+    ) -> UpsertPlan<'a, MssqlDialect> {
+        UpsertPlan {
+            table: TableSource::new(&TABLE, None),
+            columns,
+            values,
+            conflict_columns,
+            assignments,
+            returning,
+        }
+    }
+
+    #[test]
+    fn renders_merge_upsert() {
+        let columns = ["id", "name"];
+        let conflict_columns = ["id"];
+        let mut values = vec![
+            Expr::<(), MssqlDialect>::raw("?"),
+            Expr::<(), MssqlDialect>::raw("?"),
+        ];
+        let mut assignments = vec![("name", Expr::<(), MssqlDialect>::raw("?"))];
+        let plan = upsert_plan(
+            &mut values,
+            &mut assignments,
+            &columns,
+            &conflict_columns,
+            false,
+        );
+
+        let mut writer = SqlWriter::new(&MssqlDialect);
+        MssqlUpsert.write(plan, &mut writer).expect("render merge");
+        let (sql, _args) = writer.finish();
+
+        assert!(
+            sql.starts_with(
+                "MERGE INTO [dbo].[wormx_users] WITH (HOLDLOCK) AS [target] USING (SELECT ? AS [id], ? AS [name]) AS [source]"
+            ),
+            "{sql}"
+        );
+        assert!(sql.contains("ON [target].[id] = [source].[id]"), "{sql}");
+        assert!(
+            sql.contains("WHEN MATCHED THEN UPDATE SET [name] = ?"),
+            "{sql}"
+        );
+        assert!(
+            sql.ends_with(
+                "WHEN NOT MATCHED THEN INSERT ([id], [name]) VALUES ([source].[id], [source].[name]);"
+            ),
+            "{sql}"
+        );
+    }
+
+    #[test]
+    fn upsert_does_not_emit_returning_without_capability() {
+        let columns = ["id", "name"];
+        let conflict_columns = ["id"];
+        let mut values = vec![
+            Expr::<(), MssqlDialect>::raw("?"),
+            Expr::<(), MssqlDialect>::raw("?"),
+        ];
+        let mut assignments = vec![("name", Expr::<(), MssqlDialect>::raw("?"))];
+        let plan = upsert_plan(
+            &mut values,
+            &mut assignments,
+            &columns,
+            &conflict_columns,
+            true,
+        );
+
+        let mut writer = SqlWriter::new(&MssqlDialect);
+        SqlUpsert.write(plan, &mut writer).expect("render upsert");
+        let (sql, _args) = writer.finish();
+
+        assert!(!sql.contains("RETURNING"), "{sql}");
+    }
+
+    #[test]
+    fn renders_table_hints_and_options() {
+        let mut writer = SqlWriter::new(&MssqlDialect);
+        let mut projection = StarProjection;
+        let mut filters = Vec::new();
+        let mut joins = Vec::new();
+        let mut groups = Vec::new();
+        let mut having = Vec::new();
+        let mut orders = Vec::new();
+
+        SqlSelect
+            .write(
+                wormx_core::SelectPlan {
+                    table: TableSource::new(&TABLE, None).with_hint("ROWLOCK, READPAST"),
+                    distinct: false,
+                    projection: &mut projection,
+                    filters: &mut filters,
+                    joins: &mut joins,
+                    groups: &mut groups,
+                    having: &mut having,
+                    orders: &mut orders,
+                    limit: None,
+                    offset: None,
+                    options: Some("RECOMPILE"),
+                },
+                &mut writer,
+            )
+            .expect("render select");
+        let (sql, _args) = writer.finish();
+        assert_eq!(
+            sql,
+            "SELECT * FROM [dbo].[wormx_users] WITH (ROWLOCK, READPAST) OPTION (RECOMPILE)"
+        );
+
+        let mut writer = SqlWriter::new(&MssqlDialect);
+        let mut projection = StarProjection;
+        let mut filters = Vec::new();
+        let mut joins = vec![wormx_core::Join::inner(
+            TableSource::new(&TABLE, Some("u")).with_hint("READPAST"),
+            Expr::<bool, MssqlDialect>::raw("1 = 1"),
+        )];
+        let mut groups = Vec::new();
+        let mut having = Vec::new();
+        let mut orders = Vec::new();
+        SqlSelect
+            .write(
+                wormx_core::SelectPlan {
+                    table: TableSource::new(&TABLE, None),
+                    distinct: false,
+                    projection: &mut projection,
+                    filters: &mut filters,
+                    joins: &mut joins,
+                    groups: &mut groups,
+                    having: &mut having,
+                    orders: &mut orders,
+                    limit: None,
+                    offset: None,
+                    options: None,
+                },
+                &mut writer,
+            )
+            .expect("render select with hinted join");
+        let (sql, _args) = writer.finish();
+        assert_eq!(
+            sql,
+            "SELECT * FROM [dbo].[wormx_users] JOIN [dbo].[wormx_users] AS [u] WITH (READPAST) ON 1 = 1"
+        );
+
+        let mut writer = SqlWriter::new(&MssqlDialect);
+        let mut filters = Vec::new();
+        let mut joins = Vec::new();
+        SqlSelect
+            .write_count_star(
+                wormx_core::CountPlan {
+                    table: TableSource::new(&TABLE, None)
+                        .with_table_hint(wormx_core::TableHint::RowLock),
+                    distinct: false,
+                    filters: &mut filters,
+                    joins: &mut joins,
+                    options: Some("RECOMPILE"),
+                },
+                &mut writer,
+            )
+            .expect("render count");
+        let (sql, _args) = writer.finish();
+        assert_eq!(
+            sql,
+            "SELECT COUNT_BIG(*) FROM [dbo].[wormx_users] WITH (ROWLOCK) OPTION (RECOMPILE)"
+        );
+
+        let mut writer = SqlWriter::new(&MssqlDialect);
+        let mut assignments = vec![("name", Expr::<(), MssqlDialect>::raw("?"))];
+        let mut filters = Vec::new();
+        SqlUpdate
+            .write(
+                wormx_core::UpdatePlan {
+                    table: TableSource::new(&TABLE, None).with_hint("ROWLOCK"),
+                    assignments: &mut assignments,
+                    filters: &mut filters,
+                    returning: false,
+                },
+                &mut writer,
+            )
+            .expect("render update");
+        let (sql, _args) = writer.finish();
+        assert_eq!(
+            sql,
+            "UPDATE [dbo].[wormx_users] WITH (ROWLOCK) SET [name] = ?"
+        );
+
+        let mut writer = SqlWriter::new(&MssqlDialect);
+        let mut filters = Vec::new();
+        SqlDelete
+            .write(
+                wormx_core::DeletePlan {
+                    table: TableSource::new(&TABLE, None).with_hint("READPAST"),
+                    filters: &mut filters,
+                    returning: false,
+                },
+                &mut writer,
+            )
+            .expect("render delete");
+        let (sql, _args) = writer.finish();
+        assert_eq!(sql, "DELETE FROM [dbo].[wormx_users] WITH (READPAST)");
+    }
+
+    #[test]
+    fn merge_combines_holdlock_with_caller_hints() {
+        let columns = ["id"];
+        let conflict_columns = ["id"];
+        let mut values = vec![Expr::<(), MssqlDialect>::raw("?")];
+        let mut assignments = vec![("id", Expr::<(), MssqlDialect>::raw("?"))];
+        let plan = UpsertPlan {
+            table: TableSource::new(&TABLE, None).with_hint("ROWLOCK"),
+            columns: &columns,
+            values: &mut values,
+            conflict_columns: &conflict_columns,
+            assignments: &mut assignments,
+            returning: false,
+        };
+
+        let mut writer = SqlWriter::new(&MssqlDialect);
+        MssqlUpsert.write(plan, &mut writer).expect("render merge");
+        let (sql, _args) = writer.finish();
+        assert!(
+            sql.starts_with("MERGE INTO [dbo].[wormx_users] WITH (HOLDLOCK, ROWLOCK)"),
+            "{sql}"
+        );
+    }
+}

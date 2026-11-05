@@ -15,6 +15,7 @@ use sqlx_core::sql_str::{AssertSqlSafe, SqlSafeStr};
 
 use crate::db::{Db, Transaction};
 use crate::dialect::{Dialect, Expr, IntoExpr, SqlWriter};
+use crate::join::{TableHint, TableSource};
 use crate::metadata::Table;
 use crate::query::{
     Column, DeletePlan, DeleteRenderer, InsertPlan, InsertRenderer, UpdatePlan, UpdateRenderer,
@@ -135,6 +136,7 @@ impl<D: Dialect + Clone, T: Table> Insert<D, T> {
 /// A pending `UPDATE`.
 pub struct Update<D: Dialect + Clone, T: Table> {
     db: Db<D>,
+    source: TableSource,
     assignments: Vec<(&'static str, Expr<(), D>)>,
     filters: Vec<Expr<bool, D>>,
     _marker: PhantomData<fn() -> T>,
@@ -144,6 +146,7 @@ impl<D: Dialect + Clone, T: Table> Update<D, T> {
     pub(crate) fn new(db: Db<D>) -> Self {
         Self {
             db,
+            source: TableSource::new(T::DEF, None),
             assignments: Vec::new(),
             filters: Vec::new(),
             _marker: PhantomData,
@@ -164,6 +167,19 @@ impl<D: Dialect + Clone, T: Table> Update<D, T> {
     /// Sets a column to a raw SQL expression.
     pub fn set_raw<C>(mut self, column: Column<C>, sql: impl Into<String>) -> Self {
         self.assignments.push((column.name(), Expr::raw(sql)));
+        self
+    }
+
+    /// Attaches table hints to the target table, for example
+    /// `"ROWLOCK, READPAST"` or [`TableHint::RowLock`].
+    pub fn hint(mut self, hints: impl Into<&'static str>) -> Self {
+        self.source.hints = Some(hints.into());
+        self
+    }
+
+    /// Attaches a typed table hint to the target table.
+    pub fn table_hint(mut self, hint: TableHint) -> Self {
+        self.source.hints = Some(hint.as_sql());
         self
     }
 
@@ -230,7 +246,7 @@ impl<D: Dialect + Clone, T: Table> Update<D, T> {
         let mut writer = SqlWriter::new(self.db.dialect());
         D::Update::default().write(
             UpdatePlan {
-                table: T::DEF,
+                table: self.source,
                 assignments: &mut self.assignments,
                 filters: &mut self.filters,
                 returning,
@@ -244,6 +260,7 @@ impl<D: Dialect + Clone, T: Table> Update<D, T> {
 /// A pending `DELETE`.
 pub struct Delete<D: Dialect + Clone, T: Table> {
     db: Db<D>,
+    source: TableSource,
     filters: Vec<Expr<bool, D>>,
     _marker: PhantomData<fn() -> T>,
 }
@@ -252,9 +269,23 @@ impl<D: Dialect + Clone, T: Table> Delete<D, T> {
     pub(crate) fn new(db: Db<D>) -> Self {
         Self {
             db,
+            source: TableSource::new(T::DEF, None),
             filters: Vec::new(),
             _marker: PhantomData,
         }
+    }
+
+    /// Attaches table hints to the target table, for example
+    /// `"ROWLOCK, READPAST"` or [`TableHint::RowLock`].
+    pub fn hint(mut self, hints: impl Into<&'static str>) -> Self {
+        self.source.hints = Some(hints.into());
+        self
+    }
+
+    /// Attaches a typed table hint to the target table.
+    pub fn table_hint(mut self, hint: TableHint) -> Self {
+        self.source.hints = Some(hint.as_sql());
+        self
     }
 
     /// Adds a filter predicate.
@@ -320,7 +351,7 @@ impl<D: Dialect + Clone, T: Table> Delete<D, T> {
         let mut writer = SqlWriter::new(self.db.dialect());
         D::Delete::default().write(
             DeletePlan {
-                table: T::DEF,
+                table: self.source,
                 filters: &mut self.filters,
                 returning,
             },
@@ -330,9 +361,11 @@ impl<D: Dialect + Clone, T: Table> Delete<D, T> {
     }
 }
 
-/// A pending `INSERT ... ON CONFLICT ... DO UPDATE`.
+/// A pending upsert, rendered by the dialect (`ON CONFLICT`, `ON DUPLICATE
+/// KEY UPDATE`, or `MERGE`).
 pub struct Upsert<D: Dialect + Clone, T: Table> {
     db: Db<D>,
+    source: TableSource,
     columns: Vec<&'static str>,
     values: Vec<Expr<(), D>>,
     conflict_columns: Vec<&'static str>,
@@ -344,6 +377,7 @@ impl<D: Dialect + Clone, T: Table> Upsert<D, T> {
     pub(crate) fn new(db: Db<D>) -> Self {
         Self {
             db,
+            source: TableSource::new(T::DEF, None),
             columns: Vec::new(),
             values: Vec::new(),
             conflict_columns: Vec::new(),
@@ -366,6 +400,19 @@ impl<D: Dialect + Clone, T: Table> Upsert<D, T> {
     /// The conflict target columns, for example the primary key.
     pub fn conflict_on<C>(mut self, column: Column<C>) -> Self {
         self.conflict_columns.push(column.name());
+        self
+    }
+
+    /// Attaches table hints to the target table, for example
+    /// `"ROWLOCK, READPAST"` or [`TableHint::RowLock`].
+    pub fn hint(mut self, hints: impl Into<&'static str>) -> Self {
+        self.source.hints = Some(hints.into());
+        self
+    }
+
+    /// Attaches a typed table hint to the target table.
+    pub fn table_hint(mut self, hint: TableHint) -> Self {
+        self.source.hints = Some(hint.as_sql());
         self
     }
 
@@ -424,7 +471,7 @@ impl<D: Dialect + Clone, T: Table> Upsert<D, T> {
         let mut writer = SqlWriter::new(self.db.dialect());
         D::Upsert::default().write(
             UpsertPlan {
-                table: T::DEF,
+                table: self.source,
                 columns: &self.columns,
                 values: &mut self.values,
                 conflict_columns: &self.conflict_columns,

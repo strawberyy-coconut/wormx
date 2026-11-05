@@ -171,7 +171,8 @@ Insert and update values accept either Rust values or expressions; use
 `exec_returning()` decodes returned rows and is only used on dialects with
 `RETURNING` support. Plain `exec()` returns the driver's `QueryResult`.
 
-Upserts use the `ON CONFLICT` form:
+Upserts use a dialect renderer. PostgreSQL and SQLite use `ON CONFLICT`, MySQL
+uses `ON DUPLICATE KEY UPDATE`, and SQL Server uses `MERGE ... WITH (HOLDLOCK)`:
 
 ```rust
 db.upsert::<Users>()
@@ -182,6 +183,11 @@ db.upsert::<Users>()
     .exec()
     .await?;
 ```
+
+`conflict_on` is the conflict target for PostgreSQL/SQLite and the join key for
+SQL Server's `MERGE`; MySQL ignores it because `ON DUPLICATE KEY` chooses the
+unique index itself. `exec_returning` remains dialect-gated and is not emitted
+for dialects that report `returning: false`.
 
 Transactions use `begin`, `exec_in`, and `commit`/`rollback`:
 
@@ -263,6 +269,56 @@ let ranked: Vec<(String, i64)> = db
 ```
 
 `GROUP BY` and `HAVING` are available on projected selects.
+
+### Table hints and statement options
+
+Attach SQL Server table hints without dropping to raw SQL:
+
+```rust
+let rows = db
+    .query(Users::all())
+    .hint("ROWLOCK, READPAST")
+    .exec()
+    .await?;
+
+db.update::<Users>()
+    .hint("ROWLOCK")
+    .set(Users::fields().active(), false)
+    .filter(Users::fields().id().eq(1_i64))
+    .exec()
+    .await?;
+```
+
+Hints are also available on `TableSource` for joins, and typed variants cover
+the common SQL Server hints:
+
+```rust
+use wormx::TableHint;
+
+let source = Todos::alias("t").table().with_table_hint(TableHint::ReadPast);
+let joined = db
+    .query(Users::all())
+    .join(wormx::Join::inner(source, Users::fields().id().eq(Todos::alias("t").user_id())))
+    .exec()
+    .await?;
+```
+
+Dialects that do not support hints ignore them. On SQL Server they render as
+`WITH (...)`.
+
+Statement-level options are available on queries and counts:
+
+```rust
+let claim = db
+    .query(Jobs::all())
+    .filter(Jobs::fields().status().eq("READY"))
+    .option("RECOMPILE")
+    .first()
+    .await?;
+```
+
+The string is the content of `OPTION (...)`, without the wrapper. Dialects that
+do not support it ignore the setting.
 
 ## Relations
 
@@ -386,11 +442,15 @@ let users = db
 `sql_function!` accepts columns, typed expressions, and Rust values for its
 arguments. Use `sql = "..."` when the SQL name differs from the Rust name.
 
-Custom operators follow the same pattern:
+Custom operators follow the same pattern. Prefer the explicit `operator!` form;
+the older `infix_operator!`, `prefix_operator!`, and `postfix_operator!` macros
+remain as shorthands for grouped operators:
 
 ```rust
-wormx::infix_operator! {
+wormx::operator! {
     pub fn concat(left: String, right: String) -> String = "||";
+    fixity = Infix;
+    grouping = Operands; // Operands | None | Precedence(n)
 }
 
 wormx::prefix_operator! {
@@ -398,10 +458,34 @@ wormx::prefix_operator! {
 }
 ```
 
+`Operands` is the safe default. `None` opts out of parentheses and is only for
+operators whose grammar forbids them. `Precedence(n)` is accepted for forward
+compatibility and currently renders like `Operands`.
+
 This is the same extension model Diesel documents: operators and functions are
 normal types/functions supplied by the application or driver crate, not enum
 variants that require a core change. A driver can expose its own operators and
 functions from its crate.
+
+Custom operators parenthesize their operands by default, so a declared prefix
+operator is safe inside a larger predicate:
+
+```rust
+wormx::prefix_operator! {
+    pub fn not_(value: bool) -> bool = "NOT";
+}
+
+// not_(active.eq(true).and(name.eq("Alice"))) renders as
+// NOT ((... = ...) AND (... = ...))
+```
+
+Use `Expr::group()` when you want an explicit pair of parentheses around an
+expression you built by hand.
+
+`Expr::raw` emits text verbatim and does not bind it. Never interpolate user
+input into `raw`; use `.eq(value)` or `Expr::bind(value)` instead. Reserve `raw`
+for literals and SQL constructs that must stay literal, such as a
+filtered-index predicate (`status <> N'FINISHED'`).
 
 `COALESCE` is SQL standard, so it lives in the core expression layer rather
 than a driver crate:
@@ -519,12 +603,15 @@ Supported directly:
 - `GROUP BY` and `HAVING`
 - `ORDER BY`, `LIMIT`, `OFFSET`
 - `COUNT(*)`, `COUNT(expr)`, `COUNT(DISTINCT expr)`
-- driver-specific `LIMIT/OFFSET` spelling
+- CTEs (`.with(...)`) and window functions (`.over(...)`)
+- insert, update, delete, and upsert builders
+- `RETURNING` on dialects that support it (`exec_returning`)
+- driver-specific `LIMIT/OFFSET` spelling, table hints, and `OPTION (...)`
+- explicit grouping for custom operators, plus `Expr::group()`
 
 Not modeled yet:
 
-- union, CTEs, and window functions
-- insert, update, delete, and `RETURNING`/`OUTPUT`
+- `UNION` / `INTERSECT` / `EXCEPT`
 - column aliases and ordered null placement
 
 Those are the next places where the builder stops simulating SQL and starts
@@ -716,6 +803,12 @@ The associated type avoids specialization: a dialect chooses a renderer type
 instead of trying to override a blanket implementation. `SqlSelect` is itself a
 generic SQL renderer, so most drivers use it unchanged.
 
+An external renderer can reproduce the generic shape. `Join::render`,
+`TableSource::render`, `write_from_filters`, `write_groups_having`,
+`write_orders`, and `write_options` are public, so a renderer can override one
+clause without copying the whole body. `SelectPlan` and `CountPlan` expose the
+base table as a `TableSource`, including aliases and hints.
+
 For smaller differences, `Dialect` still exposes overridable syntax hooks:
 
 ```rust
@@ -726,11 +819,23 @@ impl wormx::Dialect for MssqlDialect {
         writer.push("COUNT_BIG(*)");
     }
 
-    fn write_count_start(distinct: bool, writer: &mut wormx::SqlWriter<Self>) {
-        writer.push("COUNT_BIG(");
-        if distinct {
-            writer.push("DISTINCT ");
-        }
+    // Write the function name only. The renderer adds `(` and `DISTINCT`.
+    fn write_count_start(_distinct: bool, writer: &mut wormx::SqlWriter<Self>) {
+        writer.push("COUNT_BIG");
+    }
+
+    // Table hints and OPTION (...) are dialect-specific wrappers. The default
+    // implementations emit nothing.
+    fn write_table_hint(&self, hints: &str, writer: &mut wormx::SqlWriter<Self>) {
+        writer.push(" WITH (");
+        writer.push(hints);
+        writer.push(")");
+    }
+
+    fn write_options(&self, options: &str, writer: &mut wormx::SqlWriter<Self>) {
+        writer.push(" OPTION (");
+        writer.push(options);
+        writer.push(")");
     }
 
     fn write_limit_offset(

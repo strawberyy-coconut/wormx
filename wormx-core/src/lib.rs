@@ -25,7 +25,7 @@ pub use dialect::{
 };
 pub use dml::{Delete, Insert, Update, Upsert};
 pub use include::Include;
-pub use join::{Join, JoinKind, TableSource};
+pub use join::{Join, JoinKind, TableHint, TableSource};
 pub use metadata::{
     ColumnDef, RelationDef, RelationKind, Table, TableDef, TableRef, TableRefError,
 };
@@ -34,5 +34,6 @@ pub use query::{
     Get, InsertPlan, InsertRenderer, IntoSelect, ProjectedSelect, Projection, ProjectionWriter,
     Query, Scalar, Select, SelectPlan, SelectRenderer, SqlDelete, SqlInsert, SqlSelect, SqlUpdate,
     SqlUpsert, StarProjection, Subquery, UpdatePlan, UpdateRenderer, UpsertPlan, UpsertRenderer,
+    write_filters, write_from_filters, write_groups_having, write_options, write_orders,
 };
 pub use relation::{BelongsTo, BelongsToRef, HasMany, HasManyRef, OptionalBelongsToRef};

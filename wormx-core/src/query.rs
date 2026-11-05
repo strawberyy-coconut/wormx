@@ -14,7 +14,7 @@ use sqlx_core::types::Type;
 use crate::db::Db;
 use crate::dialect::{Dialect, Expr, IntoExpr, Order, SqlWriter};
 use crate::include::Include;
-use crate::join::{Join, push_table};
+use crate::join::{Join, TableHint, TableSource, push_table};
 use crate::metadata::{Table, TableDef};
 
 /// A dialect-neutral table query.
@@ -199,12 +199,14 @@ where
 /// A projected table query bound to a dialect and database handle.
 pub struct ProjectedSelect<D: Dialect + Clone, T: Table + 'static, P: Projection<D>> {
     db: Db<D>,
+    source: TableSource,
     distinct: bool,
     filters: Vec<Expr<bool, D>>,
     joins: Vec<Join<D>>,
     orders: Vec<Order<D>>,
     limit: Option<u64>,
     offset: Option<u64>,
+    options: Option<&'static str>,
     projection: P,
     groups: Vec<Expr<(), D>>,
     having: Vec<Expr<bool, D>>,
@@ -328,6 +330,26 @@ where
         self
     }
 
+    /// Attaches table hints to the base table, for example
+    /// `"ROWLOCK, READPAST"` or [`TableHint::RowLock`].
+    pub fn hint(mut self, hints: impl Into<&'static str>) -> Self {
+        self.source.hints = Some(hints.into());
+        self
+    }
+
+    /// Attaches a typed table hint to the base table.
+    pub fn table_hint(mut self, hint: TableHint) -> Self {
+        self.source.hints = Some(hint.as_sql());
+        self
+    }
+
+    /// Sets a dialect-specific trailing statement option, for example
+    /// `"RECOMPILE"`.
+    pub fn option(mut self, options: &'static str) -> Self {
+        self.options = Some(options);
+        self
+    }
+
     /// Executes the query and returns the first row.
     pub async fn first(mut self) -> Result<Option<P::Output>>
     where
@@ -351,7 +373,7 @@ where
         write_ctes(&mut writer, &mut self.ctes)?;
         D::Select::default().write(
             SelectPlan {
-                table: T::DEF,
+                table: self.source,
                 distinct: self.distinct,
                 projection: &mut self.projection,
                 filters: &mut self.filters,
@@ -361,6 +383,7 @@ where
                 orders: &mut self.orders,
                 limit: self.limit,
                 offset: self.offset,
+                options: self.options,
             },
             &mut writer,
         )?;
@@ -385,7 +408,7 @@ where
         write_ctes(&mut writer, &mut self.ctes)?;
         D::Select::default().write(
             SelectPlan {
-                table: T::DEF,
+                table: self.source,
                 distinct: self.distinct,
                 projection: &mut self.projection,
                 filters: &mut self.filters,
@@ -395,6 +418,7 @@ where
                 orders: &mut self.orders,
                 limit: self.limit,
                 offset: self.offset,
+                options: self.options,
             },
             &mut writer,
         )?;
@@ -448,7 +472,7 @@ where
         write_ctes(&mut writer, &mut self.ctes)?;
         D::Select::default().write_count(
             SelectPlan {
-                table: T::DEF,
+                table: self.source,
                 distinct: self.distinct,
                 projection: &mut self.projection,
                 filters: &mut self.filters,
@@ -458,6 +482,7 @@ where
                 orders: &mut self.orders,
                 limit: self.limit,
                 offset: self.offset,
+                options: self.options,
             },
             &mut writer,
             distinct,
@@ -481,7 +506,7 @@ where
     fn render(&mut self, writer: &mut SqlWriter<'_, D>) -> Result<()> {
         D::Select::default().write(
             SelectPlan {
-                table: T::DEF,
+                table: self.source,
                 distinct: self.distinct,
                 projection: &mut self.projection,
                 filters: &mut self.filters,
@@ -491,6 +516,7 @@ where
                 orders: &mut self.orders,
                 limit: self.limit,
                 offset: self.offset,
+                options: self.options,
             },
             writer,
         )
@@ -505,6 +531,10 @@ pub trait CountProjection<D: Dialect>: Projection<D> {
 impl<D: Dialect, C: Send + Unpin> CountProjection<D> for Column<C> {
     fn write_count(&mut self, writer: &mut SqlWriter<'_, D>, distinct: bool) -> Result<()> {
         writer.write_count_start(distinct);
+        writer.write_group_start();
+        if distinct {
+            writer.push("DISTINCT ");
+        }
         self.write(writer)?;
         writer.write_group_end();
         Ok(())
@@ -514,6 +544,10 @@ impl<D: Dialect, C: Send + Unpin> CountProjection<D> for Column<C> {
 impl<D: Dialect, C: Send + Unpin> CountProjection<D> for Expr<C, D> {
     fn write_count(&mut self, writer: &mut SqlWriter<'_, D>, distinct: bool) -> Result<()> {
         writer.write_count_start(distinct);
+        writer.write_group_start();
+        if distinct {
+            writer.push("DISTINCT ");
+        }
         self.write(writer)?;
         writer.write_group_end();
         Ok(())
@@ -522,7 +556,8 @@ impl<D: Dialect, C: Send + Unpin> CountProjection<D> for Expr<C, D> {
 
 /// All inputs needed to render a `SELECT` operation.
 pub struct SelectPlan<'a, D: Dialect, P> {
-    pub table: &'static TableDef,
+    /// The base table, including an optional alias or hints.
+    pub table: TableSource,
     pub distinct: bool,
     pub projection: &'a mut P,
     pub filters: &'a mut [Expr<bool, D>],
@@ -532,19 +567,30 @@ pub struct SelectPlan<'a, D: Dialect, P> {
     pub orders: &'a mut [Order<D>],
     pub limit: Option<u64>,
     pub offset: Option<u64>,
+    /// Dialect-specific trailing statement options, without the `OPTION (...)`
+    /// wrapper, for example `"RECOMPILE"`.
+    pub options: Option<&'static str>,
 }
 
 /// Inputs needed to render `SELECT COUNT(*)`.
 pub struct CountPlan<'a, D: Dialect> {
-    pub table: &'static TableDef,
+    /// The base table, including an optional alias or hints.
+    pub table: TableSource,
     pub distinct: bool,
     pub filters: &'a mut [Expr<bool, D>],
     pub joins: &'a mut [Join<D>],
+    /// Dialect-specific trailing statement options, without the `OPTION (...)`
+    /// wrapper, for example `"RECOMPILE"`.
+    pub options: Option<&'static str>,
 }
 
 /// Renders the `SELECT` operation for a dialect.
 ///
-/// A dialect chooses its renderer with [`Dialect::Select`].
+/// A dialect chooses its renderer with [`Dialect::Select`]. An external
+/// renderer can reproduce the generic shape with the public helpers
+/// [`write_from_filters`], [`write_groups_having`], [`write_orders`], and
+/// [`write_options`], plus [`Join::render`] and [`TableSource::render`]; it does
+/// not need to copy the whole `SqlSelect` body to support joins.
 pub trait SelectRenderer<D: Dialect>: Default {
     /// Renders a row-producing select.
     fn write<P>(&self, plan: SelectPlan<'_, D, P>, writer: &mut SqlWriter<'_, D>) -> Result<()>
@@ -581,6 +627,7 @@ impl<D: Dialect> SelectRenderer<D> for SqlSelect {
         write_groups_having(writer, plan.groups, plan.having)?;
         write_orders(writer, plan.orders)?;
         writer.push_limit_offset(!plan.orders.is_empty(), plan.limit, plan.offset);
+        write_options(writer, plan.options);
         Ok(())
     }
 
@@ -595,7 +642,9 @@ impl<D: Dialect> SelectRenderer<D> for SqlSelect {
     {
         writer.write_select(false);
         plan.projection.write_count(writer, distinct)?;
-        write_from_filters(writer, plan.table, plan.filters, plan.joins)
+        write_from_filters(writer, plan.table, plan.filters, plan.joins)?;
+        write_options(writer, plan.options);
+        Ok(())
     }
 
     fn write_count_star(
@@ -605,7 +654,9 @@ impl<D: Dialect> SelectRenderer<D> for SqlSelect {
     ) -> Result<()> {
         writer.write_select(plan.distinct);
         writer.write_count_star();
-        write_from_filters(writer, plan.table, plan.filters, plan.joins)
+        write_from_filters(writer, plan.table, plan.filters, plan.joins)?;
+        write_options(writer, plan.options);
+        Ok(())
     }
 }
 
@@ -619,7 +670,8 @@ pub struct InsertPlan<'a, D: Dialect> {
 
 /// All inputs needed to render an `UPDATE` operation.
 pub struct UpdatePlan<'a, D: Dialect> {
-    pub table: &'static TableDef,
+    /// The target table, including optional hints.
+    pub table: TableSource,
     pub assignments: &'a mut [(&'static str, Expr<(), D>)],
     pub filters: &'a mut [Expr<bool, D>],
     pub returning: bool,
@@ -627,14 +679,16 @@ pub struct UpdatePlan<'a, D: Dialect> {
 
 /// All inputs needed to render a `DELETE` operation.
 pub struct DeletePlan<'a, D: Dialect> {
-    pub table: &'static TableDef,
+    /// The target table, including optional hints.
+    pub table: TableSource,
     pub filters: &'a mut [Expr<bool, D>],
     pub returning: bool,
 }
 
 /// All inputs needed to render an `UPSERT`/`MERGE` operation.
 pub struct UpsertPlan<'a, D: Dialect> {
-    pub table: &'static TableDef,
+    /// The target table, including optional hints.
+    pub table: TableSource,
     pub columns: &'a [&'static str],
     pub values: &'a mut [Expr<(), D>],
     pub conflict_columns: &'a [&'static str],
@@ -701,7 +755,7 @@ impl<D: Dialect> InsertRenderer<D> for SqlInsert {
             writer.write_group_end();
         }
 
-        if plan.returning {
+        if plan.returning && D::CAPABILITIES.returning {
             writer.write_returning();
         }
 
@@ -716,7 +770,7 @@ pub struct SqlUpdate;
 impl<D: Dialect> UpdateRenderer<D> for SqlUpdate {
     fn write(&self, plan: UpdatePlan<'_, D>, writer: &mut SqlWriter<'_, D>) -> Result<()> {
         writer.write_update();
-        push_table(writer, plan.table.schema, plan.table.name);
+        plan.table.render(writer);
         writer.write_set();
 
         for (index, (column, value)) in plan.assignments.iter_mut().enumerate() {
@@ -730,7 +784,7 @@ impl<D: Dialect> UpdateRenderer<D> for SqlUpdate {
 
         write_filters(writer, plan.filters)?;
 
-        if plan.returning {
+        if plan.returning && D::CAPABILITIES.returning {
             writer.write_returning();
         }
 
@@ -745,10 +799,10 @@ pub struct SqlDelete;
 impl<D: Dialect> DeleteRenderer<D> for SqlDelete {
     fn write(&self, plan: DeletePlan<'_, D>, writer: &mut SqlWriter<'_, D>) -> Result<()> {
         writer.write_delete();
-        push_table(writer, plan.table.schema, plan.table.name);
+        plan.table.render(writer);
         write_filters(writer, plan.filters)?;
 
-        if plan.returning {
+        if plan.returning && D::CAPABILITIES.returning {
             writer.write_returning();
         }
 
@@ -765,7 +819,7 @@ pub struct SqlUpsert;
 impl<D: Dialect> UpsertRenderer<D> for SqlUpsert {
     fn write(&self, plan: UpsertPlan<'_, D>, writer: &mut SqlWriter<'_, D>) -> Result<()> {
         writer.write_insert();
-        push_table(writer, plan.table.schema, plan.table.name);
+        plan.table.render(writer);
         writer.write_group_start();
         for (index, column) in plan.columns.iter().enumerate() {
             if index > 0 {
@@ -804,7 +858,7 @@ impl<D: Dialect> UpsertRenderer<D> for SqlUpsert {
             value.render(writer)?;
         }
 
-        if plan.returning {
+        if plan.returning && D::CAPABILITIES.returning {
             writer.write_returning();
         }
 
@@ -812,7 +866,8 @@ impl<D: Dialect> UpsertRenderer<D> for SqlUpsert {
     }
 }
 
-pub(crate) fn write_filters<D: Dialect>(
+/// Writes a `WHERE` clause for a list of filters.
+pub fn write_filters<D: Dialect>(
     writer: &mut SqlWriter<'_, D>,
     filters: &mut [Expr<bool, D>],
 ) -> Result<()> {
@@ -833,35 +888,28 @@ pub(crate) fn write_filters<D: Dialect>(
     Ok(())
 }
 
-fn write_from_filters<D: Dialect>(
+/// Writes `FROM`, joins, and the `WHERE` clause.
+///
+/// This is public so an external [`SelectRenderer`] can override one clause
+/// without copying the whole generic renderer.
+pub fn write_from_filters<D: Dialect>(
     writer: &mut SqlWriter<'_, D>,
-    table: &'static TableDef,
+    table: TableSource,
     filters: &mut [Expr<bool, D>],
     joins: &mut [Join<D>],
 ) -> Result<()> {
     writer.write_from();
-    push_table(writer, table.schema, table.name);
+    table.render(writer);
 
     for join in joins {
         join.render(writer)?;
     }
 
-    if !filters.is_empty() {
-        writer.write_where();
-        for (index, filter) in filters.iter_mut().enumerate() {
-            if index > 0 {
-                writer.write_and();
-            }
-            writer.write_group_start();
-            filter.render(writer)?;
-            writer.write_group_end();
-        }
-    }
-
-    Ok(())
+    write_filters(writer, filters)
 }
 
-fn write_groups_having<D: Dialect>(
+/// Writes `GROUP BY` and `HAVING`.
+pub fn write_groups_having<D: Dialect>(
     writer: &mut SqlWriter<'_, D>,
     groups: &mut [Expr<(), D>],
     having: &mut [Expr<bool, D>],
@@ -891,7 +939,11 @@ fn write_groups_having<D: Dialect>(
     Ok(())
 }
 
-fn write_orders<D: Dialect>(writer: &mut SqlWriter<'_, D>, orders: &mut [Order<D>]) -> Result<()> {
+/// Writes an `ORDER BY` clause.
+pub fn write_orders<D: Dialect>(
+    writer: &mut SqlWriter<'_, D>,
+    orders: &mut [Order<D>],
+) -> Result<()> {
     if !orders.is_empty() {
         writer.write_order_by();
         for (index, order) in orders.iter_mut().enumerate() {
@@ -903,6 +955,13 @@ fn write_orders<D: Dialect>(writer: &mut SqlWriter<'_, D>, orders: &mut [Order<D
     }
 
     Ok(())
+}
+
+/// Writes a dialect-specific trailing options clause, if any.
+pub fn write_options<D: Dialect>(writer: &mut SqlWriter<'_, D>, options: Option<&str>) {
+    if let Some(options) = options {
+        writer.write_options(options);
+    }
 }
 
 /// A scalar result used internally for single-column queries.
@@ -1200,6 +1259,7 @@ impl<T> Column<T> {
 /// A typed query bound to a dialect and database handle.
 pub struct Select<D: Dialect + Clone, T: 'static> {
     db: Db<D>,
+    source: TableSource,
     distinct: bool,
     filters: Vec<Expr<bool, D>>,
     joins: Vec<Join<D>>,
@@ -1208,12 +1268,14 @@ pub struct Select<D: Dialect + Clone, T: 'static> {
     ctes: Vec<Cte<D>>,
     limit: Option<u64>,
     offset: Option<u64>,
+    options: Option<&'static str>,
 }
 
 impl<D: Dialect + Clone, T: Table + 'static> Select<D, T> {
     fn new(db: Db<D>) -> Self {
         Self {
             db,
+            source: TableSource::new(T::DEF, None),
             distinct: false,
             filters: Vec::new(),
             joins: Vec::new(),
@@ -1222,6 +1284,7 @@ impl<D: Dialect + Clone, T: Table + 'static> Select<D, T> {
             ctes: Vec::new(),
             limit: None,
             offset: None,
+            options: None,
         }
     }
 
@@ -1267,6 +1330,26 @@ impl<D: Dialect + Clone, T: Table + 'static> Select<D, T> {
         self
     }
 
+    /// Attaches table hints to the base table, for example
+    /// `"ROWLOCK, READPAST"` or [`TableHint::RowLock`].
+    pub fn hint(mut self, hints: impl Into<&'static str>) -> Self {
+        self.source.hints = Some(hints.into());
+        self
+    }
+
+    /// Attaches a typed table hint to the base table.
+    pub fn table_hint(mut self, hint: TableHint) -> Self {
+        self.source.hints = Some(hint.as_sql());
+        self
+    }
+
+    /// Sets a dialect-specific trailing statement option, for example
+    /// `"RECOMPILE"`.
+    pub fn option(mut self, options: &'static str) -> Self {
+        self.options = Some(options);
+        self
+    }
+
     /// Projects the query into a typed result shape.
     pub fn select<P>(self, projection: P) -> ProjectedSelect<D, T, P>
     where
@@ -1274,12 +1357,14 @@ impl<D: Dialect + Clone, T: Table + 'static> Select<D, T> {
     {
         ProjectedSelect {
             db: self.db,
+            source: self.source,
             distinct: self.distinct,
             filters: self.filters,
             joins: self.joins,
             orders: self.orders,
             limit: self.limit,
             offset: self.offset,
+            options: self.options,
             projection,
             groups: Vec::new(),
             having: Vec::new(),
@@ -1310,7 +1395,7 @@ impl<D: Dialect + Clone, T: Table + 'static> Select<D, T> {
 
         D::Select::default().write(
             SelectPlan {
-                table: T::DEF,
+                table: self.source,
                 distinct: self.distinct,
                 projection: &mut projection,
                 filters: &mut self.filters,
@@ -1320,6 +1405,7 @@ impl<D: Dialect + Clone, T: Table + 'static> Select<D, T> {
                 orders: &mut self.orders,
                 limit: self.limit,
                 offset: self.offset,
+                options: self.options,
             },
             &mut writer,
         )?;
@@ -1350,7 +1436,7 @@ impl<D: Dialect + Clone, T: Table + 'static> Select<D, T> {
 
         D::Select::default().write(
             SelectPlan {
-                table: T::DEF,
+                table: self.source,
                 distinct: self.distinct,
                 projection: &mut projection,
                 filters: &mut self.filters,
@@ -1360,6 +1446,7 @@ impl<D: Dialect + Clone, T: Table + 'static> Select<D, T> {
                 orders: &mut self.orders,
                 limit: self.limit,
                 offset: self.offset,
+                options: self.options,
             },
             &mut writer,
         )?;
@@ -1390,10 +1477,11 @@ impl<D: Dialect + Clone, T: Table + 'static> Select<D, T> {
         write_ctes(&mut writer, &mut self.ctes)?;
         D::Select::default().write_count_star(
             CountPlan {
-                table: T::DEF,
+                table: self.source,
                 distinct: self.distinct,
                 filters: &mut self.filters,
                 joins: &mut self.joins,
+                options: self.options,
             },
             &mut writer,
         )?;
