@@ -9,7 +9,7 @@ Start the development MySQL service:
 docker compose -f ../../compose.dev.yaml up -d mysql
 ```
 
-Then run it with the default URL:
+Then run it with the default URL (inside the compose network):
 
 ```bash
 cargo run

@@ -16,8 +16,8 @@ MSSQL_URL='mssql://sa:Password1!@mssql:1433/master?encrypt=on&trust_certificate=
 ```
 
 `src/app.rs` contains the whole application, including a hand-written
-`Function<MssqlDialect>` extension and MSSQL operators (`+`, `LEN`) declared
-with the wormx macros:
+`Function<MssqlDialect>` extension plus the `LEN` function and `+` operator
+declared with the wormx macros:
 
 ```rust
 pub struct Upper;

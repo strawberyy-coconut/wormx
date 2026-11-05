@@ -66,9 +66,9 @@ fn print_table() {
 }
 ```
 
-`table!` connects to the database at compile time, asks the driver to describe
-`SELECT * FROM the_table`, reads constraints (primary key, defaults, identity,
-generated columns), and emits:
+`table!` fetches the schema at compile time from the database (or its cache),
+asks the driver to describe `SELECT * FROM the_table`, reads constraints
+(primary key, defaults, identity, generated columns), and emits:
 
 - a row struct with SQL types mapped to Rust types,
 - a `sqlx::FromRow` implementation that does not require the `sqlx` derive,
@@ -192,8 +192,9 @@ mssql://sa:Password1!@mssql:1433/master?encrypt=on&trust_certificate=true
 ```
 
 The MSSQL `json` feature is currently a no-op because `sqlx-mssql-rs` 0.1.0
-enables its JSON module without the matching `serde` dependency. Other MSSQL
-type features (`chrono`, `uuid`, `bigdecimal`, `rust_decimal`) are forwarded.
+enables `serde_json` but not `serde`, so enabling it fails to compile the
+driver. Other MSSQL type features (`chrono`, `time`, `uuid`, `bigdecimal`,
+`rust_decimal`) are forwarded.
 
 The generated code refers to `::wormx`, so `wormx` must be a direct dependency.
 
@@ -462,9 +463,10 @@ Nullable foreign keys generate `Deferred<Option<Target>>` and
 `BelongsTo::optional(...)`. Multiple foreign keys from the same source table
 get qualified names such as `user_todos` and `reviewer_todos`.
 
-Composite foreign keys generate one relation whose key is a tuple. The
+Composite foreign keys generate one relation whose key is a tuple. The row
 accessor returns a generated handle with the same `loaded()`/`expect_loaded()`
-API and implements `IntoSelect`, so it works with `db.query(...)` and
+API and implements `IntoSelect`, so it works with `db.query(...)`. The
+corresponding `Fields` accessor supplies the include type used by
 `.include(...)`:
 
 ```rust
@@ -726,9 +728,9 @@ from-row = true
 [wormx.tables."public.users"]
 struct = "User"
 
-# Map a SQL type to a Rust type.
+# Map a SQL type to a Rust type. Built-in type names are usually uppercase.
 [macros.type-overrides]
-"uuid" = "uuid::Uuid"
+"UUID" = "uuid::Uuid"
 "public.mood" = "crate::Mood"
 
 # Map one column.
@@ -762,9 +764,12 @@ with:
 
 The macro is cache-first:
 
-1. If a compatible cache entry exists, use it and do not connect to the database.
-2. Otherwise, if the database URL is set, connect, generate, and write the cache.
-3. If `WORMX_OFFLINE=1` is set, never connect.
+1. If a compatible cache entry exists and `WORMX_REDO_CACHE` is not set, use it
+   and do not connect to the database.
+2. If `WORMX_OFFLINE=1` is set, fail without connecting when no cache entry was
+   found.
+3. Otherwise, if the database URL is set, connect, generate, and write the
+   cache.
 
 Cache files live in `.wormx/table-<hash>.json` and contain schema metadata only,
 never credentials or row data. The hash covers the driver name, schema, and
@@ -787,9 +792,10 @@ Environment variables:
 | `WORMX_OFFLINE_DIR` | Read/write cache in this directory first |
 | `WORMX_REDO_CACHE` | `true`/`1`: skip the cache and read the database again |
 
-`DATABASE_URL`, `WORMX_OFFLINE`, `WORMX_OFFLINE_DIR`, and
-`WORMX_REDO_CACHE` are also emitted as `option_env!` dependencies in the
-generated code, so changing them causes Cargo to rebuild the crate.
+The configured database URL variable (default `DATABASE_URL`), `WORMX_OFFLINE`,
+`WORMX_OFFLINE_DIR`, and `WORMX_REDO_CACHE` are also emitted as `option_env!`
+dependencies in the generated code, so changing them causes Cargo to rebuild
+the crate.
 
 A `.env` file is read from the manifest directory and its ancestors. Real
 environment variables take precedence. Cargo does not track file reads made by
@@ -804,15 +810,15 @@ Built-in dialect markers are `wormx::PostgresDialect`, `wormx::SqliteDialect`,
 `Dialect` identifies the backend and selects one renderer type per logical
 operation. `SqlSyntax` holds the generic spelling defaults, and small marker
 traits describe optional capabilities. A SQL driver implements them directly and
-points each operation at the generic SQL renderer:
+points standard operations at the generic SQL renderer:
 
 ```rust
-pub struct MssqlDialect;
+pub struct PostgresDialect;
 
-impl wormx::SqlSyntax for MssqlDialect {}
+impl wormx::SqlSyntax for PostgresDialect {}
 
-impl wormx::Dialect for MssqlDialect {
-    type DB = sqlx_mssql_rs::Mssql;
+impl wormx::Dialect for PostgresDialect {
+    type DB = sqlx_postgres::Postgres;
 
     type Select = wormx::SqlSelect;
     type Insert = wormx::SqlInsert;
@@ -821,10 +827,14 @@ impl wormx::Dialect for MssqlDialect {
     type Upsert = wormx::SqlUpsert;
 
     fn quote_ident(&self, name: &str) -> String {
-        format!("[{}]", name.replace(']', "]]"))
+        format!("\"{}\"", name.replace('"', "\"\""))
     }
 }
 ```
+
+Not every operation can use a generic renderer. For example, SQL Server's
+built-in driver assigns `MssqlUpsert`, which emits `MERGE ... WITH (HOLDLOCK)`
+instead of `SqlUpsert`'s `ON CONFLICT`.
 
 The operation traits are:
 
@@ -832,7 +842,8 @@ The operation traits are:
 - `InsertRenderer`, `UpdateRenderer`, `DeleteRenderer`, `UpsertRenderer` — DML
   rendering. Each receives its plan (`InsertPlan`, `UpdatePlan`, `DeletePlan`,
   `UpsertPlan`) and writes the command string. The generic `SqlInsert`,
-  `SqlUpdate`, `SqlDelete`, and `SqlUpsert` cover standard SQL.
+  `SqlUpdate`, and `SqlDelete` cover common SQL; `SqlUpsert` uses the
+  PostgreSQL/SQLite `ON CONFLICT` form.
 
 A driver can replace any operation by implementing its trait and assigning the
 type:
@@ -845,10 +856,10 @@ impl wormx::SelectRenderer<MssqlDialect> for MssqlSelect {
     fn write<P>(
         &self,
         plan: wormx::SelectPlan<'_, MssqlDialect, P>,
-        writer: &mut wormx::SqlWriter<'_, MssqlDialect>,
+        writer: &mut wormx::SqlWriter<MssqlDialect>,
     ) -> sqlx::Result<()>
     where
-        P: wormx::ProjectionWriter<MssqlDialect>,
+        P: wormx::Projection<MssqlDialect>,
     {
         // Full control over clause order and syntax.
         todo!()
@@ -857,11 +868,11 @@ impl wormx::SelectRenderer<MssqlDialect> for MssqlSelect {
     fn write_count<P>(
         &self,
         plan: wormx::SelectPlan<'_, MssqlDialect, P>,
-        writer: &mut wormx::SqlWriter<'_, MssqlDialect>,
+        writer: &mut wormx::SqlWriter<MssqlDialect>,
         distinct: bool,
     ) -> sqlx::Result<()>
     where
-        P: wormx::ProjectionWriter<MssqlDialect> + wormx::CountProjection<MssqlDialect>,
+        P: wormx::Projection<MssqlDialect> + wormx::CountProjection<MssqlDialect>,
     {
         todo!()
     }
@@ -869,7 +880,7 @@ impl wormx::SelectRenderer<MssqlDialect> for MssqlSelect {
     fn write_count_star(
         &self,
         plan: wormx::CountPlan<'_, MssqlDialect>,
-        writer: &mut wormx::SqlWriter<'_, MssqlDialect>,
+        writer: &mut wormx::SqlWriter<MssqlDialect>,
     ) -> sqlx::Result<()> {
         todo!()
     }
@@ -958,15 +969,16 @@ by the dialect layer:
 That means a driver can change SQL spelling without patching the query builder.
 
 wormx is a sqlx library. A driver implements sqlx's `Database`, `Connection`,
-`Executor`, `Row`, `Arguments`, and related traits, plus wormx's `Dialect`,
-`SqlSyntax`, and its operation renderers. sqlx owns execution; the dialect layer owns the command
+`Executor`, `Row`, `Arguments`, and related traits, plus wormx's `Dialect` and
+its operation renderers. A SQL driver also implements `SqlSyntax` and can reuse
+the SQL renderers. sqlx owns execution; the dialect layer owns the command
 string. That string is opaque to sqlx, so a driver can interpret it as SQL or as
 its own command language. No separate executor layer is planned.
 
 A dialect-specific function is defined like this:
 
 ```rust
-use wormx::{Expr, Function, SqlWriter};
+use wormx::{Expr, Function, IntoExpr, MssqlDialect, SqlWriter};
 
 pub struct Contains;
 
@@ -975,27 +987,28 @@ impl Function<MssqlDialect> for Contains {
     type Output = bool;
     const NAME: &'static str = "CONTAINS";
 
-    fn render(args: &mut Self::Args, w: &mut SqlWriter<'_, MssqlDialect>) {
+    fn render(args: &mut Self::Args, w: &mut SqlWriter<MssqlDialect>) -> sqlx::Result<()> {
         w.push("CONTAINS(");
-        args.0.render(w).unwrap();
+        args.0.render(w)?;
         w.push(", ");
-        args.1.render(w).unwrap();
+        args.1.render(w)?;
         w.push(")");
+        Ok(())
     }
 }
 
 pub fn contains<C, Q>(column: C, query: Q) -> Expr<bool, MssqlDialect>
 where
-    C: Into<Expr<String, MssqlDialect>>,
-    Q: Into<Expr<String, MssqlDialect>>,
+    C: IntoExpr<String, MssqlDialect>,
+    Q: IntoExpr<String, MssqlDialect>,
 {
-    wormx::call::<MssqlDialect, Contains>((column.into(), query.into()))
+    wormx::call::<MssqlDialect, Contains>((column.into_expr(), query.into_expr()))
 }
 ```
 
 `Function` is defined by wormx, but the marker type is yours, so the orphan rule
-is satisfied without changing wormx. Add `impl wormx::Textual for MyTextType {}`
-to let custom text types participate in text functions.
+is satisfied without changing wormx. The `wormx::Textual` marker is available to
+driver extensions for their own text types.
 
 ## Adding a macro adapter for another driver
 
@@ -1012,7 +1025,7 @@ const DRIVER: TableDriver = TableDriver::new_with_fns::<sqlx_mssql_rs::Mssql>(
 #[proc_macro]
 pub fn table(input: TokenStream) -> TokenStream {
     let input = syn::parse_macro_input!(input as TableMacroInput);
-    match wormx_macros_core::expand_table(input, &[&DRIVER]) {
+    match wormx_macros_core::expand_table(input, &[DRIVER]) {
         Ok(tokens) => tokens.into(),
         Err(error) => error.into_compile_error().into(),
     }
@@ -1065,7 +1078,7 @@ cargo test --workspace
 The SQLite fixture creates its database and cache under Cargo's `OUT_DIR`, so
 the test does not leave files in the repository. The Postgres and MSSQL fixtures
 expect their development servers to be available; override the server with
-`POSTGRES_URL` or `MSSQL_URL`.
+`POSTGRES_URL`/`DATABASE_URL` or `MSSQL_URL`.
 
 Run the examples with:
 
@@ -1074,7 +1087,8 @@ cargo run -p wormx-example-sqlite
 cargo run -p wormx-example-postgres
 cargo run -p wormx-example-mssql
 
-# Standalone; start the compose MySQL service and set MYSQL_URL first.
+# Standalone; start the compose MySQL service first. Set MYSQL_URL when
+# running outside the compose network.
 cd examples/mysql && cargo run
 ```
 
@@ -1083,8 +1097,10 @@ extenders can target the database's syntax directly. `main.rs` only creates the
 pool and dialect. The apps demonstrate nested eager loading,
 insert/update/delete, transactions, and custom SQL functions/operators.
 
-By default the examples keep their schema cache in `OUT_DIR`, like the fixtures.
-To generate a cache in the repository instead later, run:
+By default the examples generate their schema cache in `OUT_DIR`, like the
+fixtures. If the example directory already contains a `.wormx/` entry (the
+Postgres and MSSQL examples do), that entry is found and reused instead. To
+generate a cache in the repository, run:
 
 ```bash
 WORMX_REPO_CACHE=1 cargo run -p wormx-example-sqlite
