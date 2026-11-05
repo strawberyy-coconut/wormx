@@ -11,6 +11,18 @@ mod drivers;
 /// ```ignore
 /// wormx::table!("users");
 /// wormx::table!("public.users");
+///
+/// wormx::table! {
+///     "public.users" as User {
+///         derives(Debug, Clone, serde::Serialize),
+///         attrs(serde(rename_all = "camelCase")),
+///         columns {
+///             "type" as kind {
+///                 attrs(serde(rename = "type")),
+///             },
+///         },
+///     }
+/// }
 /// ```
 #[proc_macro]
 pub fn table(input: TokenStream) -> TokenStream {

@@ -74,6 +74,42 @@ generated columns), and emits:
 - a `sqlx::FromRow` implementation that does not require the `sqlx` derive,
 - a `wormx::Table` implementation containing column and primary-key metadata.
 
+### Per-table code generation
+
+`table!` also accepts an optional struct name and a block for table- and
+column-level customizations:
+
+```rust
+wormx::table! {
+    "dbo.source_file" as SourceFile {
+        derives(Debug, Clone, serde::Serialize, utoipa::ToSchema),
+        attrs(schema(as = SourceFileSchema)),
+        columns {
+            publication_date {
+                attrs(
+                    serde(serialize_with = "crate::helpers::time::serde_dt_opt::serialize"),
+                    schema(value_type = Option<String>, format = DateTime),
+                ),
+            },
+            "type" as kind {
+                attrs(serde(rename = "type"), schema(rename = "type")),
+            },
+        },
+    }
+}
+```
+
+- `as StructName` overrides `[wormx.tables."<table>".struct]` and the name
+  derived from the table.
+- `derives(...)` replaces `[wormx.codegen] derives` for this table. Use
+  `derives()` to emit no derives.
+- `attrs(...)` adds attributes to the generated struct or field. Write the
+  attribute body without the surrounding `#[...]`; attributes are forwarded as
+  written, so tool-specific syntax is preserved.
+- `columns { "db_column" as field_name { ... } }` renames a generated field and
+  applies attributes to it. The column name may also be written unquoted.
+  `as field_name` is optional when only adding attributes.
+
 ## Status
 
 Implemented:

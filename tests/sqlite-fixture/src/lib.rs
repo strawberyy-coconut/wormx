@@ -10,6 +10,18 @@ wormx::table!("profile_links");
 wormx::table!("implicit_parents");
 wormx::table!("implicit_children");
 
+wormx::table! {
+    "users" as RenamedUser {
+        derives(Debug, Clone),
+        attrs(allow(dead_code)),
+        columns {
+            "name" as display_name {
+                attrs(allow(dead_code), doc = "The user's display name."),
+            },
+        },
+    }
+}
+
 wormx::sql_function! {
     pub fn lower(value: String) -> String;
 }
@@ -75,6 +87,22 @@ mod tests {
             .find(|column| column.name == "email")
             .expect("email column");
         assert!(email.nullable);
+    }
+
+    #[test]
+    fn table_dsl_renames_and_attributes_are_applied() {
+        let table = <RenamedUser as wormx::Table>::DEF;
+        assert_eq!(table.name, "users");
+        assert_eq!(table.primary_key, &["id"]);
+
+        let renamed = RenamedUser::new(
+            2,
+            "Bob".to_owned(),
+            Some("bob@example.com".to_owned()),
+            false,
+        );
+        assert_eq!(renamed.display_name, "Bob");
+        assert_eq!(RenamedUser::fields().display_name().name(), "name");
     }
 
     #[test]

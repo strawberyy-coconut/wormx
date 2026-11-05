@@ -1,7 +1,26 @@
 use wormx::{Db, SqliteDialect};
 
-wormx::table!("app_users");
-wormx::table!("app_todos");
+wormx::table! {
+    "app_users" as AppUsers {
+        derives(Debug, Clone),
+        columns {
+            "email" {
+                attrs(doc = "Optional contact email address."),
+            },
+        },
+    }
+}
+
+wormx::table! {
+    "app_todos" as AppTodos {
+        derives(Debug, Clone),
+        columns {
+            "title" {
+                attrs(doc = "Todo title."),
+            },
+        },
+    }
+}
 
 wormx::sql_function! {
     fn upper(value: String) -> String;
