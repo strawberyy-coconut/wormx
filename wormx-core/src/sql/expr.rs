@@ -274,6 +274,8 @@ impl<T, D: SqlDialect> Expr<T, D> {
 }
 
 /// Arguments accepted by a SQL function.
+///
+/// Tuples support up to 16 arguments.
 pub trait FunctionArgs<D: SqlDialect>: Send {
     fn render(&mut self, writer: &mut Writer<D>) -> Result<(), Error>;
 }
@@ -297,6 +299,27 @@ impl<D: SqlDialect> FunctionArgs<D> for ColumnRef {
     }
 }
 
+macro_rules! impl_function_args_tuple {
+    ($($ty:ident : $index:tt),+ $(,)?) => {
+        impl<D: SqlDialect, $($ty),+> FunctionArgs<D> for ($($ty,)+)
+        where
+            $($ty: FunctionArgs<D>,)+
+        {
+            fn render(&mut self, writer: &mut Writer<D>) -> Result<(), Error> {
+                let mut first = true;
+                $(
+                    if !first {
+                        writer.write_comma();
+                    }
+                    first = false;
+                    self.$index.render(writer)?;
+                )+
+                Ok(())
+            }
+        }
+    };
+}
+
 impl<D: SqlDialect, A> FunctionArgs<D> for (A,)
 where
     A: FunctionArgs<D>,
@@ -306,32 +329,21 @@ where
     }
 }
 
-impl<D: SqlDialect, A, B> FunctionArgs<D> for (A, B)
-where
-    A: FunctionArgs<D>,
-    B: FunctionArgs<D>,
-{
-    fn render(&mut self, writer: &mut Writer<D>) -> Result<(), Error> {
-        self.0.render(writer)?;
-        writer.write_comma();
-        self.1.render(writer)
-    }
-}
-
-impl<D: SqlDialect, A, B, C> FunctionArgs<D> for (A, B, C)
-where
-    A: FunctionArgs<D>,
-    B: FunctionArgs<D>,
-    C: FunctionArgs<D>,
-{
-    fn render(&mut self, writer: &mut Writer<D>) -> Result<(), Error> {
-        self.0.render(writer)?;
-        writer.write_comma();
-        self.1.render(writer)?;
-        writer.write_comma();
-        self.2.render(writer)
-    }
-}
+impl_function_args_tuple!(A: 0, B: 1);
+impl_function_args_tuple!(A: 0, B: 1, C: 2);
+impl_function_args_tuple!(A: 0, B: 1, C: 2, E: 3);
+impl_function_args_tuple!(A: 0, B: 1, C: 2, E: 3, F: 4);
+impl_function_args_tuple!(A: 0, B: 1, C: 2, E: 3, F: 4, G: 5);
+impl_function_args_tuple!(A: 0, B: 1, C: 2, E: 3, F: 4, G: 5, H: 6);
+impl_function_args_tuple!(A: 0, B: 1, C: 2, E: 3, F: 4, G: 5, H: 6, I: 7);
+impl_function_args_tuple!(A: 0, B: 1, C: 2, E: 3, F: 4, G: 5, H: 6, I: 7, J: 8);
+impl_function_args_tuple!(A: 0, B: 1, C: 2, E: 3, F: 4, G: 5, H: 6, I: 7, J: 8, K: 9);
+impl_function_args_tuple!(A: 0, B: 1, C: 2, E: 3, F: 4, G: 5, H: 6, I: 7, J: 8, K: 9, L: 10);
+impl_function_args_tuple!(A: 0, B: 1, C: 2, E: 3, F: 4, G: 5, H: 6, I: 7, J: 8, K: 9, L: 10, M: 11);
+impl_function_args_tuple!(A: 0, B: 1, C: 2, E: 3, F: 4, G: 5, H: 6, I: 7, J: 8, K: 9, L: 10, M: 11, N: 12);
+impl_function_args_tuple!(A: 0, B: 1, C: 2, E: 3, F: 4, G: 5, H: 6, I: 7, J: 8, K: 9, L: 10, M: 11, N: 12, O: 13);
+impl_function_args_tuple!(A: 0, B: 1, C: 2, E: 3, F: 4, G: 5, H: 6, I: 7, J: 8, K: 9, L: 10, M: 11, N: 12, O: 13, P: 14);
+impl_function_args_tuple!(A: 0, B: 1, C: 2, E: 3, F: 4, G: 5, H: 6, I: 7, J: 8, K: 9, L: 10, M: 11, N: 12, O: 13, P: 14, Q: 15);
 
 /// A SQL function that can be rendered for a specific dialect.
 pub trait Function<D: SqlDialect> {

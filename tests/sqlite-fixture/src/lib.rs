@@ -206,6 +206,95 @@ mod tests {
     }
 
     #[test]
+    fn renders_large_projection_and_function_tuples() {
+        use wormx::{Expr, Function, SqlWriter, SqliteDialect, write_projection};
+
+        let dialect = SqliteDialect;
+        let mut writer = SqlWriter::new(dialect);
+        let mut projection = (
+            Users::fields().id(),
+            Users::fields().name(),
+            Users::fields().email(),
+            Users::fields().active(),
+            Users::fields().id(),
+            Users::fields().name(),
+            Users::fields().email(),
+            Users::fields().active(),
+            Users::fields().id(),
+            Users::fields().name(),
+            Users::fields().email(),
+            Users::fields().active(),
+            Users::fields().id(),
+            Users::fields().name(),
+            Users::fields().email(),
+            Users::fields().active(),
+        );
+
+        write_projection(&mut writer, &mut projection).expect("render projection tuple");
+        let (sql, _args) = writer.finish();
+        assert_eq!(
+            sql,
+            "\"users\".\"id\", \"users\".\"name\", \"users\".\"email\", \"users\".\"active\", \
+             \"users\".\"id\", \"users\".\"name\", \"users\".\"email\", \"users\".\"active\", \
+             \"users\".\"id\", \"users\".\"name\", \"users\".\"email\", \"users\".\"active\", \
+             \"users\".\"id\", \"users\".\"name\", \"users\".\"email\", \"users\".\"active\""
+        );
+
+        struct SixteenArgs;
+
+        impl Function<SqliteDialect> for SixteenArgs {
+            type Args = (
+                Expr<String, SqliteDialect>,
+                Expr<String, SqliteDialect>,
+                Expr<String, SqliteDialect>,
+                Expr<String, SqliteDialect>,
+                Expr<String, SqliteDialect>,
+                Expr<String, SqliteDialect>,
+                Expr<String, SqliteDialect>,
+                Expr<String, SqliteDialect>,
+                Expr<String, SqliteDialect>,
+                Expr<String, SqliteDialect>,
+                Expr<String, SqliteDialect>,
+                Expr<String, SqliteDialect>,
+                Expr<String, SqliteDialect>,
+                Expr<String, SqliteDialect>,
+                Expr<String, SqliteDialect>,
+                Expr<String, SqliteDialect>,
+            );
+            type Output = String;
+            const NAME: &'static str = "SIXTEEN";
+        }
+
+        let mut writer = SqlWriter::new(dialect);
+        let mut expr = wormx::call::<SqliteDialect, SixteenArgs>((
+            Expr::raw("a"),
+            Expr::raw("b"),
+            Expr::raw("c"),
+            Expr::raw("d"),
+            Expr::raw("e"),
+            Expr::raw("f"),
+            Expr::raw("g"),
+            Expr::raw("h"),
+            Expr::raw("i"),
+            Expr::raw("j"),
+            Expr::raw("k"),
+            Expr::raw("l"),
+            Expr::raw("m"),
+            Expr::raw("n"),
+            Expr::raw("o"),
+            Expr::raw("p"),
+        ));
+
+        expr.render(&mut writer)
+            .expect("render function args tuple");
+        let (sql, _args) = writer.finish();
+        assert_eq!(
+            sql,
+            "SIXTEEN(a, b, c, d, e, f, g, h, i, j, k, l, m, n, o, p)"
+        );
+    }
+
+    #[test]
     fn custom_prefix_operator_groups_its_operand() {
         use wormx::{Expr, SqlWriter, SqliteDialect};
 

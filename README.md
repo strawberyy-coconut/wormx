@@ -713,7 +713,8 @@ letting an application represent a query the DSL has not learned yet.
 
 Supported directly:
 
-- `SELECT` projections, including tuples, computed expressions, and aggregates
+- `SELECT` projections, including tuples of up to 16 elements, computed
+  expressions, and aggregates
 - `DISTINCT`
 - `WHERE` with SQL precedence preserved by explicit grouping
 - `IN`, `NOT IN`, `IN (subquery)`

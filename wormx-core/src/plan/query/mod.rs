@@ -111,7 +111,10 @@ impl<D: Dialect> Projection<D> for StarProjection {
     }
 }
 
-/// A selectable projection: one column/expression, or a tuple of them.
+/// A selectable projection: one column/expression, or a tuple of up to 16.
+///
+/// The tuple limit matches SQLx's `FromRow` support, so every projection can
+/// be decoded.
 pub trait Projection<D: Dialect>: Send {
     type Output;
     type Row: Send + Unpin;
@@ -154,55 +157,53 @@ impl<D: Dialect, C: Send + Unpin> Projection<D> for Expr<C, D> {
 
 impl<D: Dialect, C: Send + Unpin> CountProjection<D> for Expr<C, D> {}
 
-// Tuple field access by index is not possible in a macro_rules! repetition, so
-// the tuple impls are written explicitly below.
-impl<D, A, B> Projection<D> for (A, B)
-where
-    D: Dialect,
-    A: Projection<D>,
-    B: Projection<D>,
-    A::Output: Send + Unpin,
-    B::Output: Send + Unpin,
-{
-    type Output = (A::Output, B::Output);
-    type Row = (A::Output, B::Output);
+// The macro receives each tuple index because a macro_rules! repetition cannot
+// generate positional field access on its own.
+macro_rules! impl_projection_tuple {
+    ($($ty:ident : $index:tt),+ $(,)?) => {
+        impl<D, $($ty),+> Projection<D> for ($($ty,)+)
+        where
+            D: Dialect,
+            $($ty: Projection<D>,)+
+            $($ty::Output: Send + Unpin,)+
+        {
+            type Output = ($($ty::Output,)+);
+            type Row = ($($ty::Output,)+);
 
-    fn visit(&mut self, out: &mut dyn ProjectionVisitor<D>) -> Result<()> {
-        self.0.visit(out)?;
-        out.separator()?;
-        self.1.visit(out)
-    }
+            fn visit(&mut self, out: &mut dyn ProjectionVisitor<D>) -> Result<()> {
+                let mut first = true;
+                $(
+                    if !first {
+                        out.separator()?;
+                    }
+                    first = false;
+                    self.$index.visit(out)?;
+                )+
+                Ok(())
+            }
 
-    fn map(row: Self::Row) -> Self::Output {
-        row
-    }
+            fn map(row: Self::Row) -> Self::Output {
+                row
+            }
+        }
+    };
 }
 
-impl<D, A, B, C> Projection<D> for (A, B, C)
-where
-    D: Dialect,
-    A: Projection<D>,
-    B: Projection<D>,
-    C: Projection<D>,
-    A::Output: Send + Unpin,
-    B::Output: Send + Unpin,
-    C::Output: Send + Unpin,
-{
-    type Output = (A::Output, B::Output, C::Output);
-    type Row = (A::Output, B::Output, C::Output);
-
-    fn visit(&mut self, out: &mut dyn ProjectionVisitor<D>) -> Result<()> {
-        self.0.visit(out)?;
-        out.separator()?;
-        self.1.visit(out)?;
-        out.separator()?;
-        self.2.visit(out)
-    }
-
-    fn map(row: Self::Row) -> Self::Output {
-        row
-    }
-}
+impl_projection_tuple!(A: 0, B: 1);
+impl_projection_tuple!(A: 0, B: 1, C: 2);
+impl_projection_tuple!(A: 0, B: 1, C: 2, E: 3);
+impl_projection_tuple!(A: 0, B: 1, C: 2, E: 3, F: 4);
+impl_projection_tuple!(A: 0, B: 1, C: 2, E: 3, F: 4, G: 5);
+impl_projection_tuple!(A: 0, B: 1, C: 2, E: 3, F: 4, G: 5, H: 6);
+impl_projection_tuple!(A: 0, B: 1, C: 2, E: 3, F: 4, G: 5, H: 6, I: 7);
+impl_projection_tuple!(A: 0, B: 1, C: 2, E: 3, F: 4, G: 5, H: 6, I: 7, J: 8);
+impl_projection_tuple!(A: 0, B: 1, C: 2, E: 3, F: 4, G: 5, H: 6, I: 7, J: 8, K: 9);
+impl_projection_tuple!(A: 0, B: 1, C: 2, E: 3, F: 4, G: 5, H: 6, I: 7, J: 8, K: 9, L: 10);
+impl_projection_tuple!(A: 0, B: 1, C: 2, E: 3, F: 4, G: 5, H: 6, I: 7, J: 8, K: 9, L: 10, M: 11);
+impl_projection_tuple!(A: 0, B: 1, C: 2, E: 3, F: 4, G: 5, H: 6, I: 7, J: 8, K: 9, L: 10, M: 11, N: 12);
+impl_projection_tuple!(A: 0, B: 1, C: 2, E: 3, F: 4, G: 5, H: 6, I: 7, J: 8, K: 9, L: 10, M: 11, N: 12, O: 13);
+impl_projection_tuple!(A: 0, B: 1, C: 2, E: 3, F: 4, G: 5, H: 6, I: 7, J: 8, K: 9, L: 10, M: 11, N: 12, O: 13, P: 14);
+impl_projection_tuple!(A: 0, B: 1, C: 2, E: 3, F: 4, G: 5, H: 6, I: 7, J: 8, K: 9, L: 10, M: 11, N: 12, O: 13, P: 14, Q: 15);
 
 /// A projected table query bound to a dialect and database handle.
 pub struct ProjectedSelect<D: Dialect + Clone, T: Table + 'static, P: Projection<D>> {
