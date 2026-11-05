@@ -16,7 +16,7 @@ sqlx-core = { version = "0.9.0", default-features = false }
 sqlx-postgres = { version = "0.9.0", default-features = false }
 sqlx-sqlite = { version = "0.9.0", default-features = false }
 sqlx-mysql = { version = "0.9.0", default-features = false }
-sqlx-mssql-rs = { version = "0.1.0", default-features = false }
+sqlx-mssql-rs = { version = "0.1.1", default-features = false }
 
 syn = { version = "2", features = ["full"] }
 quote = "1"
