@@ -16,10 +16,10 @@ pub use wormx_core::{
     RawQuery, RelationDef, RelationKind, RenderExpr, Scalar, Select, SelectPlan, SelectRenderer,
     SqlDelete, SqlInsert, SqlSelect, SqlUpdate, SqlUpsert, SqlWriter, StarProjection, Subquery,
     SupportsArrays, SupportsFullTextSearch, SupportsJson, SupportsReturning, SupportsUpsert, Table,
-    TableDef, TableHint, TableRef, TableRefError, TableSource, Textual, Transaction, Update,
-    UpdatePlan, UpdateRenderer, Upsert, UpsertPlan, UpsertRenderer, Window, call, coalesce,
-    count_star, dense_rank, rank, row_number, write_filters, write_from_filters,
-    write_groups_having, write_options, write_orders,
+    TableDef, TableRef, TableRefError, TableSource, Textual, Transaction, Update, UpdatePlan,
+    UpdateRenderer, Upsert, UpsertPlan, UpsertRenderer, Window, call, coalesce, count_star,
+    dense_rank, rank, row_number, write_filters, write_from_filters, write_groups_having,
+    write_orders, write_tail,
 };
 
 #[cfg(any(

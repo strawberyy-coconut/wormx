@@ -272,9 +272,13 @@ let ranked: Vec<(String, i64)> = db
 
 ### Table hints and statement options
 
-Attach SQL Server table hints without dropping to raw SQL:
+Core has only an opaque source suffix and statement tail. It does not know what
+`ROWLOCK`, `READPAST`, or `OPTION (RECOMPILE)` mean. SQL Server supplies the
+typed builders from its driver crate:
 
 ```rust
+use wormx::{MssqlStatementExt, MssqlTableExt, TableHint};
+
 let rows = db
     .query(Users::all())
     .hint("ROWLOCK, READPAST")
@@ -282,20 +286,17 @@ let rows = db
     .await?;
 
 db.update::<Users>()
-    .hint("ROWLOCK")
+    .hint(TableHint::RowLock)
     .set(Users::fields().active(), false)
     .filter(Users::fields().id().eq(1_i64))
     .exec()
     .await?;
 ```
 
-Hints are also available on `TableSource` for joins, and typed variants cover
-the common SQL Server hints:
+Hints also work on `TableSource` for joins:
 
 ```rust
-use wormx::TableHint;
-
-let source = Todos::alias("t").table().with_table_hint(TableHint::ReadPast);
+let source = Todos::alias("t").table().hint(TableHint::ReadPast);
 let joined = db
     .query(Users::all())
     .join(wormx::Join::inner(source, Users::fields().id().eq(Todos::alias("t").user_id())))
@@ -303,10 +304,8 @@ let joined = db
     .await?;
 ```
 
-Dialects that do not support hints ignore them. On SQL Server they render as
-`WITH (...)`.
-
-Statement-level options are available on queries and counts:
+Statement-level options are available on queries and counts through
+`MssqlStatementExt`:
 
 ```rust
 let claim = db
@@ -318,7 +317,8 @@ let claim = db
 ```
 
 The string is the content of `OPTION (...)`, without the wrapper. Dialects that
-do not support it ignore the setting.
+do not override the core hooks ignore opaque suffixes and tails. A driver can
+add its own extension trait for its own syntax without changing core.
 
 ## Relations
 
@@ -606,7 +606,8 @@ Supported directly:
 - CTEs (`.with(...)`) and window functions (`.over(...)`)
 - insert, update, delete, and upsert builders
 - `RETURNING` on dialects that support it (`exec_returning`)
-- driver-specific `LIMIT/OFFSET` spelling, table hints, and `OPTION (...)`
+- driver-specific `LIMIT/OFFSET` spelling, plus opaque source suffixes and tails
+  for dialect extensions such as SQL Server hints and `OPTION (...)`
 - explicit grouping for custom operators, plus `Expr::group()`
 
 Not modeled yet:
@@ -805,9 +806,9 @@ generic SQL renderer, so most drivers use it unchanged.
 
 An external renderer can reproduce the generic shape. `Join::render`,
 `TableSource::render`, `write_from_filters`, `write_groups_having`,
-`write_orders`, and `write_options` are public, so a renderer can override one
+`write_orders`, and `write_tail` are public, so a renderer can override one
 clause without copying the whole body. `SelectPlan` and `CountPlan` expose the
-base table as a `TableSource`, including aliases and hints.
+base table as a `TableSource`, including aliases and opaque suffixes.
 
 For smaller differences, `Dialect` still exposes overridable syntax hooks:
 
@@ -824,17 +825,17 @@ impl wormx::Dialect for MssqlDialect {
         writer.push("COUNT_BIG");
     }
 
-    // Table hints and OPTION (...) are dialect-specific wrappers. The default
-    // implementations emit nothing.
-    fn write_table_hint(&self, hints: &str, writer: &mut wormx::SqlWriter<Self>) {
+    // Source suffixes and statement tails are opaque in core. SQL Server gives
+    // them `WITH (...)` and `OPTION (...)` meaning; the defaults emit nothing.
+    fn write_source_suffix(&self, suffix: &str, writer: &mut wormx::SqlWriter<Self>) {
         writer.push(" WITH (");
-        writer.push(hints);
+        writer.push(suffix);
         writer.push(")");
     }
 
-    fn write_options(&self, options: &str, writer: &mut wormx::SqlWriter<Self>) {
+    fn write_tail(&self, tail: &str, writer: &mut wormx::SqlWriter<Self>) {
         writer.push(" OPTION (");
-        writer.push(options);
+        writer.push(tail);
         writer.push(")");
     }
 

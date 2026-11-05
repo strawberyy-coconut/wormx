@@ -11,88 +11,40 @@ use crate::query::Subquery;
 pub struct TableSource {
     pub def: &'static TableDef,
     pub alias: Option<&'static str>,
-    /// Dialect-specific table hints, for example `"ROWLOCK, READPAST"`.
+    /// An opaque, dialect-defined suffix for the source.
     ///
-    /// The dialect decides the wrapper syntax. Dialects that do not support
-    /// table hints render nothing for this field.
-    pub hints: Option<&'static str>,
+    /// Core does not assign meaning to this text. A dialect that supports a
+    /// source suffix renders it through [`Dialect::write_source_suffix`]; the
+    /// default implementation ignores it.
+    pub suffix: Option<&'static str>,
 }
 
 impl TableSource {
-    /// Creates a table source with an optional alias and no hints.
+    /// Creates a table source with an optional alias and no suffix.
     pub const fn new(def: &'static TableDef, alias: Option<&'static str>) -> Self {
         Self {
             def,
             alias,
-            hints: None,
+            suffix: None,
         }
     }
 
-    /// Attaches raw table hints, for example `"ROWLOCK, READPAST"`, or a typed
-    /// [`TableHint`].
-    pub fn with_hint(mut self, hints: impl Into<&'static str>) -> Self {
-        self.hints = Some(hints.into());
+    /// Attaches an opaque, dialect-defined source suffix.
+    pub const fn with_suffix(mut self, suffix: &'static str) -> Self {
+        self.suffix = Some(suffix);
         self
     }
 
-    /// Attaches a typed table hint.
-    pub const fn with_table_hint(mut self, hint: TableHint) -> Self {
-        self.hints = Some(hint.as_sql());
-        self
-    }
-
-    /// Writes the table, alias, and any hints.
+    /// Writes the table, alias, and any dialect-defined suffix.
     pub fn render<D: Dialect>(&self, writer: &mut SqlWriter<'_, D>) {
         push_table(writer, self.def.schema, self.def.name);
         if let Some(alias) = self.alias {
             writer.write_as();
             writer.push_ident(alias);
         }
-        if let Some(hints) = self.hints {
-            writer.write_table_hint(hints);
+        if let Some(suffix) = self.suffix {
+            writer.write_source_suffix(suffix);
         }
-    }
-}
-
-/// A typed table hint for dialects that support them.
-///
-/// Use [`TableHint::Raw`] for hints not modeled here, or to combine several
-/// hints in one string.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum TableHint {
-    NoLock,
-    RowLock,
-    ReadPast,
-    UpdLock,
-    HoldLock,
-    TabLock,
-    TabLockX,
-    RepeatableRead,
-    Serializable,
-    Raw(&'static str),
-}
-
-impl TableHint {
-    /// The SQL text of the hint, without a `WITH (...)` wrapper.
-    pub const fn as_sql(self) -> &'static str {
-        match self {
-            Self::NoLock => "NOLOCK",
-            Self::RowLock => "ROWLOCK",
-            Self::ReadPast => "READPAST",
-            Self::UpdLock => "UPDLOCK",
-            Self::HoldLock => "HOLDLOCK",
-            Self::TabLock => "TABLOCK",
-            Self::TabLockX => "TABLOCKX",
-            Self::RepeatableRead => "REPEATABLEREAD",
-            Self::Serializable => "SERIALIZABLE",
-            Self::Raw(sql) => sql,
-        }
-    }
-}
-
-impl From<TableHint> for &'static str {
-    fn from(hint: TableHint) -> Self {
-        hint.as_sql()
     }
 }
 

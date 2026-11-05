@@ -211,7 +211,7 @@ mod tests {
                 wormx::write_groups_having(writer, plan.groups, plan.having)?;
                 wormx::write_orders(writer, plan.orders)?;
                 writer.push_limit_offset(!plan.orders.is_empty(), plan.limit, plan.offset);
-                wormx::write_options(writer, plan.options);
+                wormx::write_tail(writer, plan.tail);
                 Ok(())
             }
 
@@ -251,7 +251,7 @@ mod tests {
         JoinSelect
             .write(
                 SelectPlan {
-                    table: TableSource::new(Users::DEF, None).with_hint("ROWLOCK"),
+                    table: TableSource::new(Users::DEF, None).with_suffix("ROWLOCK"),
                     distinct: false,
                     projection: &mut projection,
                     filters: &mut filters,
@@ -261,7 +261,7 @@ mod tests {
                     orders: &mut orders,
                     limit: None,
                     offset: None,
-                    options: Some("RECOMPILE"),
+                    tail: Some("RECOMPILE"),
                 },
                 &mut writer,
             )

@@ -2,7 +2,8 @@
 
 use sqlx_core::error::Result;
 use wormx_core::{
-    Capabilities, Dialect, SqlWriter, SupportsFullTextSearch, SupportsJson, SupportsUpsert,
+    Capabilities, Delete, Dialect, ProjectedSelect, Projection, Select, SqlWriter,
+    SupportsFullTextSearch, SupportsJson, SupportsUpsert, Table, TableSource, Update, Upsert,
     UpsertPlan, UpsertRenderer,
 };
 
@@ -48,15 +49,15 @@ impl Dialect for MssqlDialect {
         writer.push("COUNT_BIG");
     }
 
-    fn write_table_hint(&self, hints: &str, writer: &mut SqlWriter<Self>) {
+    fn write_source_suffix(&self, suffix: &str, writer: &mut SqlWriter<Self>) {
         writer.push(" WITH (");
-        writer.push(hints);
+        writer.push(suffix);
         writer.push(")");
     }
 
-    fn write_options(&self, options: &str, writer: &mut SqlWriter<Self>) {
+    fn write_tail(&self, tail: &str, writer: &mut SqlWriter<Self>) {
         writer.push(" OPTION (");
-        writer.push(options);
+        writer.push(tail);
         writer.push(")");
     }
 
@@ -82,6 +83,133 @@ impl Dialect for MssqlDialect {
     }
 }
 
+/// A typed SQL Server table hint.
+///
+/// Use [`TableHint::Raw`] for hints not modeled here, or to combine several
+/// hints in one string.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TableHint {
+    NoLock,
+    RowLock,
+    ReadPast,
+    UpdLock,
+    HoldLock,
+    TabLock,
+    TabLockX,
+    RepeatableRead,
+    Serializable,
+    Raw(&'static str),
+}
+
+impl TableHint {
+    /// The SQL text of the hint, without a `WITH (...)` wrapper.
+    pub const fn as_sql(self) -> &'static str {
+        match self {
+            Self::NoLock => "NOLOCK",
+            Self::RowLock => "ROWLOCK",
+            Self::ReadPast => "READPAST",
+            Self::UpdLock => "UPDLOCK",
+            Self::HoldLock => "HOLDLOCK",
+            Self::TabLock => "TABLOCK",
+            Self::TabLockX => "TABLOCKX",
+            Self::RepeatableRead => "REPEATABLEREAD",
+            Self::Serializable => "SERIALIZABLE",
+            Self::Raw(sql) => sql,
+        }
+    }
+}
+
+/// Converts a raw string or [`TableHint`] into SQL Server hint text.
+pub trait IntoTableHint {
+    fn into_table_hint(self) -> &'static str;
+}
+
+impl IntoTableHint for &'static str {
+    fn into_table_hint(self) -> &'static str {
+        self
+    }
+}
+
+impl IntoTableHint for TableHint {
+    fn into_table_hint(self) -> &'static str {
+        self.as_sql()
+    }
+}
+
+/// SQL Server table-hint builders.
+///
+/// The core `wormx` builders only know about opaque source suffixes. This trait
+/// gives them SQL Server vocabulary without putting `ROWLOCK`, `READPAST`, or
+/// the `WITH (...)` syntax in core.
+pub trait MssqlTableExt: Sized {
+    /// Attaches a SQL Server table hint, for example `TableHint::RowLock` or
+    /// `"ROWLOCK, READPAST"`.
+    fn hint<H: IntoTableHint>(self, hint: H) -> Self;
+}
+
+impl MssqlTableExt for TableSource {
+    fn hint<H: IntoTableHint>(self, hint: H) -> Self {
+        self.with_suffix(hint.into_table_hint())
+    }
+}
+
+impl<T: Table> MssqlTableExt for Select<MssqlDialect, T> {
+    fn hint<H: IntoTableHint>(self, hint: H) -> Self {
+        self.with_source_suffix(hint.into_table_hint())
+    }
+}
+
+impl<T, P> MssqlTableExt for ProjectedSelect<MssqlDialect, T, P>
+where
+    T: Table,
+    P: Projection<MssqlDialect>,
+{
+    fn hint<H: IntoTableHint>(self, hint: H) -> Self {
+        self.with_source_suffix(hint.into_table_hint())
+    }
+}
+
+impl<T: Table> MssqlTableExt for Update<MssqlDialect, T> {
+    fn hint<H: IntoTableHint>(self, hint: H) -> Self {
+        self.with_source_suffix(hint.into_table_hint())
+    }
+}
+
+impl<T: Table> MssqlTableExt for Delete<MssqlDialect, T> {
+    fn hint<H: IntoTableHint>(self, hint: H) -> Self {
+        self.with_source_suffix(hint.into_table_hint())
+    }
+}
+
+impl<T: Table> MssqlTableExt for Upsert<MssqlDialect, T> {
+    fn hint<H: IntoTableHint>(self, hint: H) -> Self {
+        self.with_source_suffix(hint.into_table_hint())
+    }
+}
+
+/// SQL Server statement-tail builders.
+pub trait MssqlStatementExt: Sized {
+    /// Sets the body of a SQL Server `OPTION (...)` clause, for example
+    /// `"RECOMPILE"`.
+    fn option(self, options: &'static str) -> Self;
+}
+
+impl<T: Table> MssqlStatementExt for Select<MssqlDialect, T> {
+    fn option(self, options: &'static str) -> Self {
+        self.with_tail(options)
+    }
+}
+
+impl<T, P> MssqlStatementExt for ProjectedSelect<MssqlDialect, T, P>
+where
+    T: Table,
+    P: Projection<MssqlDialect>,
+{
+    fn option(self, options: &'static str) -> Self {
+        self.with_tail(options)
+    }
+}
+
 /// SQL Server upsert renderer using `MERGE ... WITH (HOLDLOCK)`.
 ///
 /// `MERGE` has no `ON CONFLICT`/`DO UPDATE` spelling, so this renderer builds a
@@ -101,12 +229,12 @@ impl UpsertRenderer<MssqlDialect> for MssqlUpsert {
         // HOLDLOCK makes the MERGE safe under concurrency. If the caller also
         // supplied hints, keep them without duplicating HOLDLOCK.
         writer.push(" WITH (HOLDLOCK");
-        if let Some(hints) = plan.table.hints
-            && !hints.trim().is_empty()
-            && !hints.to_ascii_uppercase().contains("HOLDLOCK")
+        if let Some(suffix) = plan.table.suffix
+            && !suffix.trim().is_empty()
+            && !suffix.to_ascii_uppercase().contains("HOLDLOCK")
         {
             writer.push(", ");
-            writer.push(hints);
+            writer.push(suffix);
         }
         writer.push(") AS ");
         writer.push_ident("target");
@@ -568,7 +696,7 @@ mod tests {
         SqlSelect
             .write(
                 wormx_core::SelectPlan {
-                    table: TableSource::new(&TABLE, None).with_hint("ROWLOCK, READPAST"),
+                    table: TableSource::new(&TABLE, None).with_suffix("ROWLOCK, READPAST"),
                     distinct: false,
                     projection: &mut projection,
                     filters: &mut filters,
@@ -578,7 +706,7 @@ mod tests {
                     orders: &mut orders,
                     limit: None,
                     offset: None,
-                    options: Some("RECOMPILE"),
+                    tail: Some("RECOMPILE"),
                 },
                 &mut writer,
             )
@@ -593,7 +721,7 @@ mod tests {
         let mut projection = StarProjection;
         let mut filters = Vec::new();
         let mut joins = vec![wormx_core::Join::inner(
-            TableSource::new(&TABLE, Some("u")).with_hint("READPAST"),
+            TableSource::new(&TABLE, Some("u")).with_suffix("READPAST"),
             Expr::<bool, MssqlDialect>::raw("1 = 1"),
         )];
         let mut groups = Vec::new();
@@ -612,7 +740,7 @@ mod tests {
                     orders: &mut orders,
                     limit: None,
                     offset: None,
-                    options: None,
+                    tail: None,
                 },
                 &mut writer,
             )
@@ -629,12 +757,11 @@ mod tests {
         SqlSelect
             .write_count_star(
                 wormx_core::CountPlan {
-                    table: TableSource::new(&TABLE, None)
-                        .with_table_hint(wormx_core::TableHint::RowLock),
+                    table: TableSource::new(&TABLE, None).hint(TableHint::RowLock),
                     distinct: false,
                     filters: &mut filters,
                     joins: &mut joins,
-                    options: Some("RECOMPILE"),
+                    tail: Some("RECOMPILE"),
                 },
                 &mut writer,
             )
@@ -651,7 +778,7 @@ mod tests {
         SqlUpdate
             .write(
                 wormx_core::UpdatePlan {
-                    table: TableSource::new(&TABLE, None).with_hint("ROWLOCK"),
+                    table: TableSource::new(&TABLE, None).with_suffix("ROWLOCK"),
                     assignments: &mut assignments,
                     filters: &mut filters,
                     returning: false,
@@ -670,7 +797,7 @@ mod tests {
         SqlDelete
             .write(
                 wormx_core::DeletePlan {
-                    table: TableSource::new(&TABLE, None).with_hint("READPAST"),
+                    table: TableSource::new(&TABLE, None).with_suffix("READPAST"),
                     filters: &mut filters,
                     returning: false,
                 },
@@ -688,7 +815,7 @@ mod tests {
         let mut values = vec![Expr::<(), MssqlDialect>::raw("?")];
         let mut assignments = vec![("id", Expr::<(), MssqlDialect>::raw("?"))];
         let plan = UpsertPlan {
-            table: TableSource::new(&TABLE, None).with_hint("ROWLOCK"),
+            table: TableSource::new(&TABLE, None).with_suffix("ROWLOCK"),
             columns: &columns,
             values: &mut values,
             conflict_columns: &conflict_columns,

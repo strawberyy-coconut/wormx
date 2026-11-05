@@ -15,7 +15,7 @@ use sqlx_core::sql_str::{AssertSqlSafe, SqlSafeStr};
 
 use crate::db::{Db, Transaction};
 use crate::dialect::{Dialect, Expr, IntoExpr, SqlWriter};
-use crate::join::{TableHint, TableSource};
+use crate::join::TableSource;
 use crate::metadata::Table;
 use crate::query::{
     Column, DeletePlan, DeleteRenderer, InsertPlan, InsertRenderer, UpdatePlan, UpdateRenderer,
@@ -170,16 +170,9 @@ impl<D: Dialect + Clone, T: Table> Update<D, T> {
         self
     }
 
-    /// Attaches table hints to the target table, for example
-    /// `"ROWLOCK, READPAST"` or [`TableHint::RowLock`].
-    pub fn hint(mut self, hints: impl Into<&'static str>) -> Self {
-        self.source.hints = Some(hints.into());
-        self
-    }
-
-    /// Attaches a typed table hint to the target table.
-    pub fn table_hint(mut self, hint: TableHint) -> Self {
-        self.source.hints = Some(hint.as_sql());
+    /// Attaches an opaque, dialect-defined suffix to the target table.
+    pub fn with_source_suffix(mut self, suffix: &'static str) -> Self {
+        self.source.suffix = Some(suffix);
         self
     }
 
@@ -275,16 +268,9 @@ impl<D: Dialect + Clone, T: Table> Delete<D, T> {
         }
     }
 
-    /// Attaches table hints to the target table, for example
-    /// `"ROWLOCK, READPAST"` or [`TableHint::RowLock`].
-    pub fn hint(mut self, hints: impl Into<&'static str>) -> Self {
-        self.source.hints = Some(hints.into());
-        self
-    }
-
-    /// Attaches a typed table hint to the target table.
-    pub fn table_hint(mut self, hint: TableHint) -> Self {
-        self.source.hints = Some(hint.as_sql());
+    /// Attaches an opaque, dialect-defined suffix to the target table.
+    pub fn with_source_suffix(mut self, suffix: &'static str) -> Self {
+        self.source.suffix = Some(suffix);
         self
     }
 
@@ -403,16 +389,9 @@ impl<D: Dialect + Clone, T: Table> Upsert<D, T> {
         self
     }
 
-    /// Attaches table hints to the target table, for example
-    /// `"ROWLOCK, READPAST"` or [`TableHint::RowLock`].
-    pub fn hint(mut self, hints: impl Into<&'static str>) -> Self {
-        self.source.hints = Some(hints.into());
-        self
-    }
-
-    /// Attaches a typed table hint to the target table.
-    pub fn table_hint(mut self, hint: TableHint) -> Self {
-        self.source.hints = Some(hint.as_sql());
+    /// Attaches an opaque, dialect-defined suffix to the target table.
+    pub fn with_source_suffix(mut self, suffix: &'static str) -> Self {
+        self.source.suffix = Some(suffix);
         self
     }
 

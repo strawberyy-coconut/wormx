@@ -14,7 +14,7 @@ use sqlx_core::types::Type;
 use crate::db::Db;
 use crate::dialect::{Dialect, Expr, IntoExpr, Order, SqlWriter};
 use crate::include::Include;
-use crate::join::{Join, TableHint, TableSource, push_table};
+use crate::join::{Join, TableSource, push_table};
 use crate::metadata::{Table, TableDef};
 
 /// A dialect-neutral table query.
@@ -206,7 +206,7 @@ pub struct ProjectedSelect<D: Dialect + Clone, T: Table + 'static, P: Projection
     orders: Vec<Order<D>>,
     limit: Option<u64>,
     offset: Option<u64>,
-    options: Option<&'static str>,
+    tail: Option<&'static str>,
     projection: P,
     groups: Vec<Expr<(), D>>,
     having: Vec<Expr<bool, D>>,
@@ -330,23 +330,15 @@ where
         self
     }
 
-    /// Attaches table hints to the base table, for example
-    /// `"ROWLOCK, READPAST"` or [`TableHint::RowLock`].
-    pub fn hint(mut self, hints: impl Into<&'static str>) -> Self {
-        self.source.hints = Some(hints.into());
+    /// Attaches an opaque, dialect-defined suffix to the base table.
+    pub fn with_source_suffix(mut self, suffix: &'static str) -> Self {
+        self.source.suffix = Some(suffix);
         self
     }
 
-    /// Attaches a typed table hint to the base table.
-    pub fn table_hint(mut self, hint: TableHint) -> Self {
-        self.source.hints = Some(hint.as_sql());
-        self
-    }
-
-    /// Sets a dialect-specific trailing statement option, for example
-    /// `"RECOMPILE"`.
-    pub fn option(mut self, options: &'static str) -> Self {
-        self.options = Some(options);
+    /// Attaches an opaque, dialect-defined tail to the statement.
+    pub fn with_tail(mut self, tail: &'static str) -> Self {
+        self.tail = Some(tail);
         self
     }
 
@@ -383,7 +375,7 @@ where
                 orders: &mut self.orders,
                 limit: self.limit,
                 offset: self.offset,
-                options: self.options,
+                tail: self.tail,
             },
             &mut writer,
         )?;
@@ -418,7 +410,7 @@ where
                 orders: &mut self.orders,
                 limit: self.limit,
                 offset: self.offset,
-                options: self.options,
+                tail: self.tail,
             },
             &mut writer,
         )?;
@@ -482,7 +474,7 @@ where
                 orders: &mut self.orders,
                 limit: self.limit,
                 offset: self.offset,
-                options: self.options,
+                tail: self.tail,
             },
             &mut writer,
             distinct,
@@ -516,7 +508,7 @@ where
                 orders: &mut self.orders,
                 limit: self.limit,
                 offset: self.offset,
-                options: self.options,
+                tail: self.tail,
             },
             writer,
         )
@@ -567,9 +559,8 @@ pub struct SelectPlan<'a, D: Dialect, P> {
     pub orders: &'a mut [Order<D>],
     pub limit: Option<u64>,
     pub offset: Option<u64>,
-    /// Dialect-specific trailing statement options, without the `OPTION (...)`
-    /// wrapper, for example `"RECOMPILE"`.
-    pub options: Option<&'static str>,
+    /// An opaque, dialect-defined statement tail.
+    pub tail: Option<&'static str>,
 }
 
 /// Inputs needed to render `SELECT COUNT(*)`.
@@ -579,9 +570,8 @@ pub struct CountPlan<'a, D: Dialect> {
     pub distinct: bool,
     pub filters: &'a mut [Expr<bool, D>],
     pub joins: &'a mut [Join<D>],
-    /// Dialect-specific trailing statement options, without the `OPTION (...)`
-    /// wrapper, for example `"RECOMPILE"`.
-    pub options: Option<&'static str>,
+    /// An opaque, dialect-defined statement tail.
+    pub tail: Option<&'static str>,
 }
 
 /// Renders the `SELECT` operation for a dialect.
@@ -589,7 +579,7 @@ pub struct CountPlan<'a, D: Dialect> {
 /// A dialect chooses its renderer with [`Dialect::Select`]. An external
 /// renderer can reproduce the generic shape with the public helpers
 /// [`write_from_filters`], [`write_groups_having`], [`write_orders`], and
-/// [`write_options`], plus [`Join::render`] and [`TableSource::render`]; it does
+/// [`write_tail`], plus [`Join::render`] and [`TableSource::render`]; it does
 /// not need to copy the whole `SqlSelect` body to support joins.
 pub trait SelectRenderer<D: Dialect>: Default {
     /// Renders a row-producing select.
@@ -627,7 +617,7 @@ impl<D: Dialect> SelectRenderer<D> for SqlSelect {
         write_groups_having(writer, plan.groups, plan.having)?;
         write_orders(writer, plan.orders)?;
         writer.push_limit_offset(!plan.orders.is_empty(), plan.limit, plan.offset);
-        write_options(writer, plan.options);
+        write_tail(writer, plan.tail);
         Ok(())
     }
 
@@ -643,7 +633,7 @@ impl<D: Dialect> SelectRenderer<D> for SqlSelect {
         writer.write_select(false);
         plan.projection.write_count(writer, distinct)?;
         write_from_filters(writer, plan.table, plan.filters, plan.joins)?;
-        write_options(writer, plan.options);
+        write_tail(writer, plan.tail);
         Ok(())
     }
 
@@ -655,7 +645,7 @@ impl<D: Dialect> SelectRenderer<D> for SqlSelect {
         writer.write_select(plan.distinct);
         writer.write_count_star();
         write_from_filters(writer, plan.table, plan.filters, plan.joins)?;
-        write_options(writer, plan.options);
+        write_tail(writer, plan.tail);
         Ok(())
     }
 }
@@ -957,10 +947,10 @@ pub fn write_orders<D: Dialect>(
     Ok(())
 }
 
-/// Writes a dialect-specific trailing options clause, if any.
-pub fn write_options<D: Dialect>(writer: &mut SqlWriter<'_, D>, options: Option<&str>) {
-    if let Some(options) = options {
-        writer.write_options(options);
+/// Writes an opaque, dialect-defined statement tail, if any.
+pub fn write_tail<D: Dialect>(writer: &mut SqlWriter<'_, D>, tail: Option<&str>) {
+    if let Some(tail) = tail {
+        writer.write_tail(tail);
     }
 }
 
@@ -1268,7 +1258,7 @@ pub struct Select<D: Dialect + Clone, T: 'static> {
     ctes: Vec<Cte<D>>,
     limit: Option<u64>,
     offset: Option<u64>,
-    options: Option<&'static str>,
+    tail: Option<&'static str>,
 }
 
 impl<D: Dialect + Clone, T: Table + 'static> Select<D, T> {
@@ -1284,7 +1274,7 @@ impl<D: Dialect + Clone, T: Table + 'static> Select<D, T> {
             ctes: Vec::new(),
             limit: None,
             offset: None,
-            options: None,
+            tail: None,
         }
     }
 
@@ -1330,23 +1320,15 @@ impl<D: Dialect + Clone, T: Table + 'static> Select<D, T> {
         self
     }
 
-    /// Attaches table hints to the base table, for example
-    /// `"ROWLOCK, READPAST"` or [`TableHint::RowLock`].
-    pub fn hint(mut self, hints: impl Into<&'static str>) -> Self {
-        self.source.hints = Some(hints.into());
+    /// Attaches an opaque, dialect-defined suffix to the base table.
+    pub fn with_source_suffix(mut self, suffix: &'static str) -> Self {
+        self.source.suffix = Some(suffix);
         self
     }
 
-    /// Attaches a typed table hint to the base table.
-    pub fn table_hint(mut self, hint: TableHint) -> Self {
-        self.source.hints = Some(hint.as_sql());
-        self
-    }
-
-    /// Sets a dialect-specific trailing statement option, for example
-    /// `"RECOMPILE"`.
-    pub fn option(mut self, options: &'static str) -> Self {
-        self.options = Some(options);
+    /// Attaches an opaque, dialect-defined tail to the statement.
+    pub fn with_tail(mut self, tail: &'static str) -> Self {
+        self.tail = Some(tail);
         self
     }
 
@@ -1364,7 +1346,7 @@ impl<D: Dialect + Clone, T: Table + 'static> Select<D, T> {
             orders: self.orders,
             limit: self.limit,
             offset: self.offset,
-            options: self.options,
+            tail: self.tail,
             projection,
             groups: Vec::new(),
             having: Vec::new(),
@@ -1405,7 +1387,7 @@ impl<D: Dialect + Clone, T: Table + 'static> Select<D, T> {
                 orders: &mut self.orders,
                 limit: self.limit,
                 offset: self.offset,
-                options: self.options,
+                tail: self.tail,
             },
             &mut writer,
         )?;
@@ -1446,7 +1428,7 @@ impl<D: Dialect + Clone, T: Table + 'static> Select<D, T> {
                 orders: &mut self.orders,
                 limit: self.limit,
                 offset: self.offset,
-                options: self.options,
+                tail: self.tail,
             },
             &mut writer,
         )?;
@@ -1481,7 +1463,7 @@ impl<D: Dialect + Clone, T: Table + 'static> Select<D, T> {
                 distinct: self.distinct,
                 filters: &mut self.filters,
                 joins: &mut self.joins,
-                options: self.options,
+                tail: self.tail,
             },
             &mut writer,
         )?;

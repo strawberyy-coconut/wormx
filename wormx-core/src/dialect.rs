@@ -254,19 +254,18 @@ pub trait Dialect: 'static + Sized + Send + Sync + Clone {
         writer.push(name);
     }
 
-    /// Writes an optional table hint attached to a `FROM`, `JOIN`, `UPDATE`,
-    /// `DELETE`, or `UPSERT` target.
+    /// Writes an opaque, dialect-defined suffix attached to a table source or
+    /// DML target.
     ///
-    /// The default emits nothing, so dialects that do not support table hints
-    /// ignore them. Dialects that do support them should add their own wrapper,
-    /// for example SQL Server's `WITH (...)`.
-    fn write_table_hint(&self, _hints: &str, _writer: &mut SqlWriter<Self>) {}
+    /// Core assigns no meaning to the text. The default ignores it; a dialect
+    /// that supports source suffixes interprets and renders it.
+    fn write_source_suffix(&self, _suffix: &str, _writer: &mut SqlWriter<Self>) {}
 
-    /// Writes a trailing statement-level options clause.
+    /// Writes an opaque, dialect-defined tail for a statement.
     ///
-    /// The default emits nothing so dialects that do not support `OPTION (...)`
-    /// ignore it. SQL Server overrides this to write ` OPTION (<options>)`.
-    fn write_options(&self, _options: &str, _writer: &mut SqlWriter<Self>) {}
+    /// Core assigns no meaning to the text. The default ignores it; a dialect
+    /// that supports a trailing clause interprets and renders it.
+    fn write_tail(&self, _tail: &str, _writer: &mut SqlWriter<Self>) {}
 
     fn write_operator(operator: &str, writer: &mut SqlWriter<Self>) {
         writer.write_space();
@@ -485,12 +484,12 @@ impl<'a, D: Dialect> SqlWriter<'a, D> {
         D::write_function_start(name, self);
     }
 
-    pub fn write_table_hint(&mut self, hints: &str) {
-        self.dialect.write_table_hint(hints, self);
+    pub fn write_source_suffix(&mut self, suffix: &str) {
+        self.dialect.write_source_suffix(suffix, self);
     }
 
-    pub fn write_options(&mut self, options: &str) {
-        self.dialect.write_options(options, self);
+    pub fn write_tail(&mut self, tail: &str) {
+        self.dialect.write_tail(tail, self);
     }
 
     pub fn write_operator(&mut self, operator: &str) {
