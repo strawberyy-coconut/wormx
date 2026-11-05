@@ -4,6 +4,7 @@ version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
+description = "Core runtime, dialect traits, and typed query DSL for wormx."
 
 [dependencies]
 sqlx-core = { workspace = true }

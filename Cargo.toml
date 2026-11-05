@@ -41,6 +41,8 @@ version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
+description = "Typed table generation and query building for SQLx."
+readme = "README.md"
 
 [dependencies]
 wormx-core = { path = "wormx-core", version = "0.1.0" }

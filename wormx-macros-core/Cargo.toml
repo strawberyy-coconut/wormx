@@ -4,6 +4,7 @@ version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
+description = "Schema introspection, caching, and code generation for wormx's table! macro."
 
 [lib]
 doctest = false
