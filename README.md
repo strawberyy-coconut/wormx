@@ -711,12 +711,15 @@ environment variables take precedence.
 Built-in dialect markers are `wormx::PostgresDialect`, `wormx::SqliteDialect`,
 `wormx::MySqlDialect`, and `wormx::MssqlDialect`.
 
-`Dialect` owns the capability set and selects one renderer type per logical
-operation. A SQL driver implements it directly and points each operation at the
-generic SQL renderer:
+`Dialect` identifies the backend and selects one renderer type per logical
+operation. `SqlSyntax` holds the generic spelling defaults, and small marker
+traits describe optional capabilities. A SQL driver implements them directly and
+points each operation at the generic SQL renderer:
 
 ```rust
 pub struct MssqlDialect;
+
+impl wormx::SqlSyntax for MssqlDialect {}
 
 impl wormx::Dialect for MssqlDialect {
     type DB = sqlx_mssql_rs::Mssql;
@@ -726,18 +729,6 @@ impl wormx::Dialect for MssqlDialect {
     type Update = wormx::SqlUpdate;
     type Delete = wormx::SqlDelete;
     type Upsert = wormx::SqlUpsert;
-
-    const CAPABILITIES: wormx::Capabilities = wormx::Capabilities {
-        select: true,
-        joins: true,
-        group_by: true,
-        aggregates: true,
-        subqueries: true,
-        scan: true,
-        returning: false,
-        full_text_search: true,
-        ..wormx::Capabilities::NONE
-    };
 
     fn quote_ident(&self, name: &str) -> String {
         format!("[{}]", name.replace(']', "]]"))
@@ -810,12 +801,11 @@ An external renderer can reproduce the generic shape. `Join::render`,
 clause without copying the whole body. `SelectPlan` and `CountPlan` expose the
 base table as a `TableSource`, including aliases and opaque suffixes.
 
-For smaller differences, `Dialect` still exposes overridable syntax hooks:
+For smaller differences, the `SqlSyntax` extension trait exposes overridable
+spelling hooks. `Dialect` itself stays small:
 
 ```rust
-impl wormx::Dialect for MssqlDialect {
-    // ...
-
+impl wormx::SqlSyntax for MssqlDialect {
     fn write_count_star(writer: &mut wormx::SqlWriter<Self>) {
         writer.push("COUNT_BIG(*)");
     }
@@ -851,14 +841,17 @@ impl wormx::Dialect for MssqlDialect {
 }
 ```
 
-`Capabilities` tells the planner what operations the dialect supports.
-Compile-time schema inspection remains in `TableDriver`, not `Dialect`.
-
-Implement capability traits:
+Capabilities are marker traits, not a separate boolean table. For example,
+`SupportsReturning` gates `exec_returning`, and `SupportsUpsert` gates
+`Db::upsert`; an unsupported operation is a compile-time error instead of a
+rendered statement that the database rejects.
 
 ```rust
 impl wormx::SupportsFullTextSearch for MssqlDialect {}
+impl wormx::SupportsUpsert for MssqlDialect {}
 ```
+
+Compile-time schema inspection remains in `TableDriver`, not `Dialect`.
 
 The AST and typed query builder live in core. The literal SQL text is produced
 by the dialect layer:
@@ -873,8 +866,8 @@ by the dialect layer:
 That means a driver can change SQL spelling without patching the query builder.
 
 wormx is a sqlx library. A driver implements sqlx's `Database`, `Connection`,
-`Executor`, `Row`, `Arguments`, and related traits, plus wormx's `Dialect` and
-its operation renderers. sqlx owns execution; the dialect layer owns the command
+`Executor`, `Row`, `Arguments`, and related traits, plus wormx's `Dialect`,
+`SqlSyntax`, and its operation renderers. sqlx owns execution; the dialect layer owns the command
 string. That string is opaque to sqlx, so a driver can interpret it as SQL or as
 its own command language. No separate executor layer is planned.
 

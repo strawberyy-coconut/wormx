@@ -2,9 +2,9 @@
 
 use sqlx_core::error::Result;
 use wormx_core::{
-    Capabilities, Delete, Dialect, ProjectedSelect, Projection, Select, SqlWriter,
-    SupportsFullTextSearch, SupportsJson, SupportsUpsert, Table, TableSource, Update, Upsert,
-    UpsertPlan, UpsertRenderer,
+    Delete, Dialect, ProjectedSelect, Projection, Select, SqlSyntax, SqlWriter,
+    SupportsFullTextSearch, SupportsUpsert, Table, TableSource, Update, Upsert, UpsertPlan,
+    UpsertRenderer,
 };
 
 /// The Microsoft SQL Server dialect marker.
@@ -20,25 +20,12 @@ impl Dialect for MssqlDialect {
     type Delete = wormx_core::SqlDelete;
     type Upsert = MssqlUpsert;
 
-    const CAPABILITIES: Capabilities = Capabilities {
-        select: true,
-        joins: true,
-        group_by: true,
-        aggregates: true,
-        subqueries: true,
-        scan: true,
-        returning: false, // MSSQL uses OUTPUT, not RETURNING
-        full_text_search: true,
-        json: false,
-        arrays: false,
-        upsert: true,
-        generated_columns: true,
-    };
-
     fn quote_ident(&self, name: &str) -> String {
         format!("[{}]", name.replace(']', "]]"))
     }
+}
 
+impl SqlSyntax for MssqlDialect {
     fn write_count_star(writer: &mut SqlWriter<Self>) {
         writer.push("COUNT_BIG(*)");
     }
@@ -309,7 +296,6 @@ fn push_qualified(writer: &mut SqlWriter<'_, MssqlDialect>, alias: &str, column:
 }
 
 impl SupportsFullTextSearch for MssqlDialect {}
-impl SupportsJson for MssqlDialect {}
 impl SupportsUpsert for MssqlDialect {}
 
 #[cfg(feature = "macros")]
@@ -570,7 +556,7 @@ mod tests {
     use super::*;
     use wormx_core::{
         ColumnDef, DeleteRenderer, Expr, SelectRenderer, SqlDelete, SqlSelect, SqlUpdate,
-        SqlUpsert, StarProjection, TableDef, TableSource, UpdateRenderer, UpsertRenderer,
+        StarProjection, TableDef, TableSource, UpdateRenderer, UpsertRenderer,
     };
 
     static COLUMNS: &[ColumnDef] = &[
@@ -660,7 +646,7 @@ mod tests {
     }
 
     #[test]
-    fn upsert_does_not_emit_returning_without_capability() {
+    fn merge_upsert_does_not_emit_returning() {
         let columns = ["id", "name"];
         let conflict_columns = ["id"];
         let mut values = vec![
@@ -677,7 +663,7 @@ mod tests {
         );
 
         let mut writer = SqlWriter::new(&MssqlDialect);
-        SqlUpsert.write(plan, &mut writer).expect("render upsert");
+        MssqlUpsert.write(plan, &mut writer).expect("render merge");
         let (sql, _args) = writer.finish();
 
         assert!(!sql.contains("RETURNING"), "{sql}");

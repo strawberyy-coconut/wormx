@@ -1,7 +1,7 @@
 //! SQLite support for wormx, built on `sqlx-sqlite`.
 
 use wormx_core::{
-    Capabilities, Dialect, SupportsFullTextSearch, SupportsJson, SupportsReturning, SupportsUpsert,
+    Dialect, SqlSyntax, SupportsFullTextSearch, SupportsJson, SupportsReturning, SupportsUpsert,
 };
 
 /// The SQLite dialect marker.
@@ -17,25 +17,12 @@ impl Dialect for SqliteDialect {
     type Delete = wormx_core::SqlDelete;
     type Upsert = wormx_core::SqlUpsert;
 
-    const CAPABILITIES: Capabilities = Capabilities {
-        select: true,
-        joins: true,
-        group_by: true,
-        aggregates: true,
-        subqueries: true,
-        scan: true,
-        returning: true,
-        full_text_search: true,
-        json: true,
-        arrays: false,
-        upsert: true,
-        generated_columns: true,
-    };
-
     fn quote_ident(&self, name: &str) -> String {
         format!("\"{}\"", name.replace('"', "\"\""))
     }
 }
+
+impl SqlSyntax for SqliteDialect {}
 
 impl SupportsReturning for SqliteDialect {}
 impl SupportsFullTextSearch for SqliteDialect {}

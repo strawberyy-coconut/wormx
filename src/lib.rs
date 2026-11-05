@@ -8,13 +8,13 @@
 
 pub use sqlx;
 pub use wormx_core::{
-    BelongsTo, BelongsToRef, BindExpr, Capabilities, Column, ColumnDef, ColumnExpr, Config,
-    ConfigError, CountPlan, CountProjection, Cte, Db, Deferred, Delete, DeletePlan, DeleteRenderer,
-    Dialect, Expr, Filtered, Fixity, Function, FunctionArgs, Get, HasMany, HasManyRef, Include,
-    Insert, InsertPlan, InsertRenderer, IntoExpr, IntoSelect, Join, JoinKind, Operator,
-    OperatorExpr, OptionalBelongsToRef, ProjectedSelect, Projection, ProjectionWriter, Query,
-    RawQuery, RelationDef, RelationKind, RenderExpr, Scalar, Select, SelectPlan, SelectRenderer,
-    SqlDelete, SqlInsert, SqlSelect, SqlUpdate, SqlUpsert, SqlWriter, StarProjection, Subquery,
+    BelongsTo, BelongsToRef, BindExpr, Column, ColumnDef, ColumnExpr, Config, ConfigError,
+    CountPlan, CountProjection, Cte, Db, Deferred, Delete, DeletePlan, DeleteRenderer, Dialect,
+    Expr, Filtered, Fixity, Function, FunctionArgs, Get, HasMany, HasManyRef, Include, Insert,
+    InsertPlan, InsertRenderer, IntoExpr, IntoSelect, Join, JoinKind, Operator, OperatorExpr,
+    OptionalBelongsToRef, ProjectedSelect, Projection, ProjectionWriter, Query, RawQuery,
+    RelationDef, RelationKind, RenderExpr, Scalar, Select, SelectPlan, SelectRenderer, SqlDelete,
+    SqlInsert, SqlSelect, SqlSyntax, SqlUpdate, SqlUpsert, SqlWriter, StarProjection, Subquery,
     SupportsArrays, SupportsFullTextSearch, SupportsJson, SupportsReturning, SupportsUpsert, Table,
     TableDef, TableRef, TableRefError, TableSource, Textual, Transaction, Update, UpdatePlan,
     UpdateRenderer, Upsert, UpsertPlan, UpsertRenderer, Window, call, coalesce, count_star,

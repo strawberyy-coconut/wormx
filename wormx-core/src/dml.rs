@@ -14,7 +14,7 @@ use sqlx_core::query_as::query_as_with;
 use sqlx_core::sql_str::{AssertSqlSafe, SqlSafeStr};
 
 use crate::db::{Db, Transaction};
-use crate::dialect::{Dialect, Expr, IntoExpr, SqlWriter};
+use crate::dialect::{Dialect, Expr, IntoExpr, SqlWriter, SupportsReturning};
 use crate::join::TableSource;
 use crate::metadata::Table;
 use crate::query::{
@@ -95,6 +95,7 @@ impl<D: Dialect + Clone, T: Table> Insert<D, T> {
     /// Executes `INSERT ... RETURNING *` and decodes the inserted row.
     pub async fn exec_returning(mut self) -> Result<T>
     where
+        D: SupportsReturning,
         T: Send + Unpin + for<'r> FromRow<'r, <D::DB as Database>::Row>,
         <D::DB as Database>::Arguments: sqlx_core::arguments::IntoArguments<D::DB>,
         for<'c> &'c mut <D::DB as Database>::Connection: Executor<'c, Database = D::DB>,
@@ -108,6 +109,7 @@ impl<D: Dialect + Clone, T: Table> Insert<D, T> {
     /// Executes `INSERT ... RETURNING *` inside a transaction.
     pub async fn exec_returning_in(mut self, tx: &mut Transaction<'_, D>) -> Result<T>
     where
+        D: SupportsReturning,
         T: Send + Unpin + for<'r> FromRow<'r, <D::DB as Database>::Row>,
         <D::DB as Database>::Arguments: sqlx_core::arguments::IntoArguments<D::DB>,
         for<'c> &'c mut <D::DB as Database>::Connection: Executor<'c, Database = D::DB>,
@@ -212,6 +214,7 @@ impl<D: Dialect + Clone, T: Table> Update<D, T> {
     /// Executes the statement and returns the affected rows.
     pub async fn exec_returning(mut self) -> Result<Vec<T>>
     where
+        D: SupportsReturning,
         T: Send + Unpin + for<'r> FromRow<'r, <D::DB as Database>::Row>,
         <D::DB as Database>::Arguments: sqlx_core::arguments::IntoArguments<D::DB>,
         for<'c> &'c mut <D::DB as Database>::Connection: Executor<'c, Database = D::DB>,
@@ -225,6 +228,7 @@ impl<D: Dialect + Clone, T: Table> Update<D, T> {
     /// Executes the statement inside a transaction and returns the affected rows.
     pub async fn exec_returning_in(mut self, tx: &mut Transaction<'_, D>) -> Result<Vec<T>>
     where
+        D: SupportsReturning,
         T: Send + Unpin + for<'r> FromRow<'r, <D::DB as Database>::Row>,
         <D::DB as Database>::Arguments: sqlx_core::arguments::IntoArguments<D::DB>,
         for<'c> &'c mut <D::DB as Database>::Connection: Executor<'c, Database = D::DB>,
@@ -310,6 +314,7 @@ impl<D: Dialect + Clone, T: Table> Delete<D, T> {
     /// Executes the statement and returns the affected rows.
     pub async fn exec_returning(mut self) -> Result<Vec<T>>
     where
+        D: SupportsReturning,
         T: Send + Unpin + for<'r> FromRow<'r, <D::DB as Database>::Row>,
         <D::DB as Database>::Arguments: sqlx_core::arguments::IntoArguments<D::DB>,
         for<'c> &'c mut <D::DB as Database>::Connection: Executor<'c, Database = D::DB>,
@@ -323,6 +328,7 @@ impl<D: Dialect + Clone, T: Table> Delete<D, T> {
     /// Executes the statement inside a transaction and returns the affected rows.
     pub async fn exec_returning_in(mut self, tx: &mut Transaction<'_, D>) -> Result<Vec<T>>
     where
+        D: SupportsReturning,
         T: Send + Unpin + for<'r> FromRow<'r, <D::DB as Database>::Row>,
         <D::DB as Database>::Arguments: sqlx_core::arguments::IntoArguments<D::DB>,
         for<'c> &'c mut <D::DB as Database>::Connection: Executor<'c, Database = D::DB>,
@@ -436,6 +442,7 @@ impl<D: Dialect + Clone, T: Table> Upsert<D, T> {
     /// Executes the statement and returns the affected row.
     pub async fn exec_returning(mut self) -> Result<T>
     where
+        D: SupportsReturning,
         T: Send + Unpin + for<'r> FromRow<'r, <D::DB as Database>::Row>,
         <D::DB as Database>::Arguments: sqlx_core::arguments::IntoArguments<D::DB>,
         for<'c> &'c mut <D::DB as Database>::Connection: Executor<'c, Database = D::DB>,

@@ -2,7 +2,7 @@
 
 use sqlx_core::error::Result;
 use wormx_core::{
-    Capabilities, Dialect, SqlWriter, SupportsFullTextSearch, SupportsJson, SupportsUpsert,
+    Dialect, SqlSyntax, SqlWriter, SupportsFullTextSearch, SupportsJson, SupportsUpsert,
     UpsertPlan, UpsertRenderer,
 };
 
@@ -19,25 +19,12 @@ impl Dialect for MySqlDialect {
     type Delete = wormx_core::SqlDelete;
     type Upsert = MySqlUpsert;
 
-    const CAPABILITIES: Capabilities = Capabilities {
-        select: true,
-        joins: true,
-        group_by: true,
-        aggregates: true,
-        subqueries: true,
-        scan: true,
-        returning: false,
-        full_text_search: true,
-        json: true,
-        arrays: false,
-        upsert: true,
-        generated_columns: true,
-    };
-
     fn quote_ident(&self, name: &str) -> String {
         format!("`{}`", name.replace('`', "``"))
     }
 }
+
+impl SqlSyntax for MySqlDialect {}
 
 /// MySQL upsert renderer using `INSERT ... ON DUPLICATE KEY UPDATE`.
 #[derive(Debug, Clone, Copy, Default)]
@@ -78,10 +65,6 @@ impl UpsertRenderer<MySqlDialect> for MySqlUpsert {
             writer.push_ident(column);
             writer.write_equals();
             value.render(writer)?;
-        }
-
-        if plan.returning && MySqlDialect::CAPABILITIES.returning {
-            writer.write_returning();
         }
 
         Ok(())

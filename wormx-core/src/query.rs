@@ -745,7 +745,7 @@ impl<D: Dialect> InsertRenderer<D> for SqlInsert {
             writer.write_group_end();
         }
 
-        if plan.returning && D::CAPABILITIES.returning {
+        if plan.returning {
             writer.write_returning();
         }
 
@@ -774,7 +774,7 @@ impl<D: Dialect> UpdateRenderer<D> for SqlUpdate {
 
         write_filters(writer, plan.filters)?;
 
-        if plan.returning && D::CAPABILITIES.returning {
+        if plan.returning {
             writer.write_returning();
         }
 
@@ -792,7 +792,7 @@ impl<D: Dialect> DeleteRenderer<D> for SqlDelete {
         plan.table.render(writer);
         write_filters(writer, plan.filters)?;
 
-        if plan.returning && D::CAPABILITIES.returning {
+        if plan.returning {
             writer.write_returning();
         }
 
@@ -848,7 +848,7 @@ impl<D: Dialect> UpsertRenderer<D> for SqlUpsert {
             value.render(writer)?;
         }
 
-        if plan.returning && D::CAPABILITIES.returning {
+        if plan.returning {
             writer.write_returning();
         }
 

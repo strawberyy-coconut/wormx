@@ -14,7 +14,7 @@ pub struct TableSource {
     /// An opaque, dialect-defined suffix for the source.
     ///
     /// Core does not assign meaning to this text. A dialect that supports a
-    /// source suffix renders it through [`Dialect::write_source_suffix`]; the
+    /// source suffix renders it through [`crate::dialect::SqlSyntax::write_source_suffix`]; the
     /// default implementation ignores it.
     pub suffix: Option<&'static str>,
 }

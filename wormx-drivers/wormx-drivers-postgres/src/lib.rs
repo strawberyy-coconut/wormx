@@ -1,7 +1,7 @@
 //! PostgreSQL support for wormx, built on `sqlx-postgres`.
 
 use wormx_core::{
-    Capabilities, Dialect, SupportsArrays, SupportsFullTextSearch, SupportsJson, SupportsReturning,
+    Dialect, SqlSyntax, SupportsArrays, SupportsFullTextSearch, SupportsJson, SupportsReturning,
     SupportsUpsert,
 };
 
@@ -18,25 +18,12 @@ impl Dialect for PostgresDialect {
     type Delete = wormx_core::SqlDelete;
     type Upsert = wormx_core::SqlUpsert;
 
-    const CAPABILITIES: Capabilities = Capabilities {
-        select: true,
-        joins: true,
-        group_by: true,
-        aggregates: true,
-        subqueries: true,
-        scan: true,
-        returning: true,
-        full_text_search: true,
-        json: true,
-        arrays: true,
-        upsert: true,
-        generated_columns: true,
-    };
-
     fn quote_ident(&self, name: &str) -> String {
         format!("\"{}\"", name.replace('"', "\"\""))
     }
 }
+
+impl SqlSyntax for PostgresDialect {}
 
 impl SupportsReturning for PostgresDialect {}
 impl SupportsFullTextSearch for PostgresDialect {}

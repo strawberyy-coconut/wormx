@@ -592,6 +592,8 @@ mod tests {
             }
         }
 
+        impl wormx::SqlSyntax for TrackingDialect {}
+
         impl Dialect for TrackingDialect {
             type DB = sqlx::Sqlite;
             type Select = TrackingSelect;
@@ -599,8 +601,6 @@ mod tests {
             type Update = wormx::SqlUpdate;
             type Delete = wormx::SqlDelete;
             type Upsert = wormx::SqlUpsert;
-
-            const CAPABILITIES: wormx::Capabilities = wormx::Capabilities::ALL;
 
             fn quote_ident(&self, name: &str) -> String {
                 format!("\"{}\"", name.replace('"', "\"\""))

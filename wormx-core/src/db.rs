@@ -13,7 +13,7 @@ use sqlx_core::sql_str::{AssertSqlSafe, SqlSafeStr};
 use sqlx_core::transaction::Transaction as SqlxTransaction;
 use sqlx_core::types::Type;
 
-use crate::dialect::Dialect;
+use crate::dialect::{Dialect, SupportsUpsert};
 use crate::dml::{Delete, Insert, Update, Upsert};
 use crate::query::{IntoSelect, Select};
 
@@ -74,7 +74,12 @@ impl<D: Dialect + Clone> Db<D> {
     }
 
     /// Starts an upsert for a generated table.
-    pub fn upsert<T: crate::metadata::Table>(&self) -> Upsert<D, T> {
+    ///
+    /// Available only for dialects that implement [`SupportsUpsert`].
+    pub fn upsert<T: crate::metadata::Table>(&self) -> Upsert<D, T>
+    where
+        D: SupportsUpsert,
+    {
         Upsert::new(self.clone())
     }
 
@@ -147,7 +152,12 @@ impl<'a, D: Dialect + Clone> Transaction<'a, D> {
     }
 
     /// Starts an upsert.
-    pub fn upsert<T: crate::metadata::Table>(&self) -> Upsert<D, T> {
+    ///
+    /// Available only for dialects that implement [`SupportsUpsert`].
+    pub fn upsert<T: crate::metadata::Table>(&self) -> Upsert<D, T>
+    where
+        D: SupportsUpsert,
+    {
         Upsert::new(self.db.clone())
     }
 

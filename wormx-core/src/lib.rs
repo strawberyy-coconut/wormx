@@ -18,8 +18,8 @@ pub use config::{
 pub use db::{Db, RawQuery, Transaction};
 pub use deferred::Deferred;
 pub use dialect::{
-    BindExpr, Capabilities, ColumnExpr, Dialect, Expr, Fixity, Function, FunctionArgs, IntoExpr,
-    Operator, OperatorExpr, RenderExpr, SqlWriter, SupportsArrays, SupportsFullTextSearch,
+    BindExpr, ColumnExpr, Dialect, Expr, Fixity, Function, FunctionArgs, IntoExpr, Operator,
+    OperatorExpr, RenderExpr, SqlSyntax, SqlWriter, SupportsArrays, SupportsFullTextSearch,
     SupportsJson, SupportsReturning, SupportsUpsert, Textual, Window, call, coalesce, count_star,
     dense_rank, rank, row_number,
 };
