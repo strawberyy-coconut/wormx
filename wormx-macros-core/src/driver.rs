@@ -30,8 +30,6 @@ pub struct TableDriver {
     db_name: &'static str,
     aliases: &'static [&'static str],
     url_schemes: &'static [&'static str],
-    #[allow(dead_code)]
-    db_path: &'static str,
     describe: DescribeValueFn,
     constraints: ConstraintsFn,
     expand: ExpandFn,
@@ -44,7 +42,6 @@ impl TableDriver {
     /// returns serialized `Describe` metadata. The constraint function reads
     /// primary keys, defaults, identity/generated columns, and foreign keys.
     pub const fn new_with_fns<DB>(
-        db_path: &'static str,
         aliases: &'static [&'static str],
         describe: DescribeValueFn,
         constraints: ConstraintsFn,
@@ -57,7 +54,6 @@ impl TableDriver {
             db_name: DB::NAME,
             aliases,
             url_schemes: DB::URL_SCHEMES,
-            db_path,
             describe,
             constraints,
             expand: expand_with::<DB>,

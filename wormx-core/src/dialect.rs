@@ -384,10 +384,6 @@ pub trait Dialect: SqlSyntax + Clone {
     type Upsert: UpsertRenderer<Self>;
 
     fn quote_ident(&self, name: &str) -> String;
-
-    fn placeholder(&self, index: usize) -> String {
-        format!("?{index}")
-    }
 }
 
 /// Marks a dialect that supports `RETURNING`.
@@ -395,6 +391,11 @@ pub trait Dialect: SqlSyntax + Clone {
 /// This gates the `exec_returning` methods on the DML builders, so a dialect
 /// without `RETURNING` rejects them at compile time.
 pub trait SupportsReturning: Dialect {}
+/// Marks a dialect that supports `FULL [OUTER] JOIN`.
+///
+/// This gates [`crate::join::Join::full`] at compile time. MySQL and MariaDB
+/// do not implement it.
+pub trait SupportsFullJoin: Dialect {}
 /// Marks a dialect that supports full-text search.
 pub trait SupportsFullTextSearch: Dialect {}
 /// Marks a dialect that supports JSON values.

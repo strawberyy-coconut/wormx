@@ -28,6 +28,7 @@ async fn main() {
         .expect("connect to wormx_test");
 
     for statement in [
+        "IF OBJECT_ID(N'dbo.wormx_reviews', N'U') IS NOT NULL DROP TABLE dbo.wormx_reviews",
         "IF OBJECT_ID(N'dbo.wormx_todos', N'U') IS NOT NULL DROP TABLE dbo.wormx_todos",
         "IF OBJECT_ID(N'dbo.wormx_users', N'U') IS NOT NULL DROP TABLE dbo.wormx_users",
         r#"
@@ -47,8 +48,21 @@ async fn main() {
                 FOREIGN KEY (user_id) REFERENCES dbo.wormx_users(id)
         )
         "#,
+        r#"
+        CREATE TABLE dbo.wormx_reviews (
+            id BIGINT IDENTITY(1,1) NOT NULL PRIMARY KEY,
+            author_id BIGINT NOT NULL,
+            reviewer_id BIGINT NOT NULL,
+            body NVARCHAR(200) NOT NULL,
+            CONSTRAINT FK_wormx_reviews_author
+                FOREIGN KEY (author_id) REFERENCES dbo.wormx_users(id),
+            CONSTRAINT FK_wormx_reviews_reviewer
+                FOREIGN KEY (reviewer_id) REFERENCES dbo.wormx_users(id)
+        )
+        "#,
         "INSERT INTO dbo.wormx_users (name, email, active) VALUES (N'Alice', NULL, 1)",
         "INSERT INTO dbo.wormx_todos (user_id, title) VALUES (1, N'Write the ORM'), (1, N'Add relations')",
+        "INSERT INTO dbo.wormx_reviews (author_id, reviewer_id, body) VALUES (1, 1, N'Looks good')",
     ] {
         query(sqlx_core::sql_str::AssertSqlSafe(statement))
             .execute(&mut connection)

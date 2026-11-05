@@ -18,24 +18,49 @@ use crate::query::{Column, IntoSelect, Query, Select};
 ///
 /// `BelongsTo` used by non-null foreign keys is created with [`BelongsTo::new`]. Nullable foreign
 /// keys use [`BelongsTo::optional`].
+///
+/// The generated accessors use [`BelongsTo::with_column`] and
+/// [`BelongsTo::optional_with_column`] so the lookup targets the column named by the foreign key,
+/// which is not necessarily the target's primary key.
 pub struct BelongsTo<T: Table, K> {
     key: Option<K>,
+    target_column: Option<&'static str>,
     _marker: PhantomData<T>,
 }
 
 impl<T: Table + 'static, K> BelongsTo<T, K> {
-    /// Creates a relation from a non-null foreign key.
+    /// Creates a relation from a non-null foreign key, targeting the table's primary key.
     pub const fn new(key: K) -> Self {
+        Self::with_column_optional(key, None)
+    }
+
+    /// Creates a relation from a non-null foreign key that targets `column` on the related table.
+    pub const fn with_column(key: K, column: &'static str) -> Self {
+        Self::with_column_optional(key, Some(column))
+    }
+
+    /// Creates a relation from a nullable foreign key, targeting the table's primary key.
+    pub const fn optional(key: Option<K>) -> Self {
+        Self::optional_with_column_optional(key, None)
+    }
+
+    /// Creates a relation from a nullable foreign key that targets `column` on the related table.
+    pub const fn optional_with_column(key: Option<K>, column: &'static str) -> Self {
+        Self::optional_with_column_optional(key, Some(column))
+    }
+
+    const fn with_column_optional(key: K, column: Option<&'static str>) -> Self {
         Self {
             key: Some(key),
+            target_column: column,
             _marker: PhantomData,
         }
     }
 
-    /// Creates a relation from a nullable foreign key.
-    pub const fn optional(key: Option<K>) -> Self {
+    const fn optional_with_column_optional(key: Option<K>, column: Option<&'static str>) -> Self {
         Self {
             key,
+            target_column: column,
             _marker: PhantomData,
         }
     }
@@ -74,11 +99,14 @@ where
             return select.filter(Expr::<bool, D>::raw("1 = 0"));
         };
 
-        let Some(primary_key) = T::DEF.primary_key.first() else {
+        let Some(target_column) = self
+            .target_column
+            .or_else(|| T::DEF.primary_key.first().copied())
+        else {
             return select.filter(Expr::<bool, D>::raw("1 = 0"));
         };
 
-        select.filter(Column::<T>::new(T::DEF.schema, T::DEF.name, primary_key).eq::<D, _>(key))
+        select.filter(Column::<T>::new(T::DEF.schema, T::DEF.name, target_column).eq::<D, _>(key))
     }
 }
 
@@ -206,13 +234,27 @@ where
 /// A borrowed view of a non-null `BelongsTo` relation.
 pub struct BelongsToRef<'a, T: Table, K> {
     key: K,
+    target_column: Option<&'static str>,
     deferred: &'a Deferred<T>,
 }
 
 impl<'a, T: Table + 'static, K> BelongsToRef<'a, T, K> {
-    /// Creates a borrowed belongs-to relation view.
+    /// Creates a borrowed belongs-to relation view targeting the table's primary key.
     pub const fn new(key: K, deferred: &'a Deferred<T>) -> Self {
-        Self { key, deferred }
+        Self {
+            key,
+            target_column: None,
+            deferred,
+        }
+    }
+
+    /// Creates a borrowed belongs-to relation view targeting `column`.
+    pub const fn with_column(key: K, column: &'static str, deferred: &'a Deferred<T>) -> Self {
+        Self {
+            key,
+            target_column: Some(column),
+            deferred,
+        }
     }
 
     /// Returns the loaded row.
@@ -250,9 +292,11 @@ where
         for<'c> &'c mut <D::DB as Database>::Connection:
             sqlx_core::executor::Executor<'c, Database = D::DB>,
     {
-        db.query(BelongsTo::<T, K>::new(self.key.clone()))
-            .first()
-            .await
+        let relation = match self.target_column {
+            Some(column) => BelongsTo::<T, K>::with_column(self.key.clone(), column),
+            None => BelongsTo::<T, K>::new(self.key.clone()),
+        };
+        db.query(relation).first().await
     }
 }
 
@@ -265,20 +309,41 @@ where
     type Table = T;
 
     fn into_select(self, db: &Db<D>) -> Select<D, T> {
-        BelongsTo::<T, K>::new(self.key).into_select(db)
+        match self.target_column {
+            Some(column) => BelongsTo::<T, K>::with_column(self.key, column).into_select(db),
+            None => BelongsTo::<T, K>::new(self.key).into_select(db),
+        }
     }
 }
 
 /// A borrowed view of a nullable `BelongsTo` relation.
 pub struct OptionalBelongsToRef<'a, T: Table, K> {
     key: Option<K>,
+    target_column: Option<&'static str>,
     deferred: &'a Deferred<Option<T>>,
 }
 
 impl<'a, T: Table + 'static, K> OptionalBelongsToRef<'a, T, K> {
-    /// Creates a borrowed nullable belongs-to relation view.
+    /// Creates a borrowed nullable belongs-to relation view targeting the table's primary key.
     pub const fn new(key: Option<K>, deferred: &'a Deferred<Option<T>>) -> Self {
-        Self { key, deferred }
+        Self {
+            key,
+            target_column: None,
+            deferred,
+        }
+    }
+
+    /// Creates a borrowed nullable belongs-to relation view targeting `column`.
+    pub const fn with_column(
+        key: Option<K>,
+        column: &'static str,
+        deferred: &'a Deferred<Option<T>>,
+    ) -> Self {
+        Self {
+            key,
+            target_column: Some(column),
+            deferred,
+        }
     }
 
     /// Returns the loaded row.
@@ -317,9 +382,11 @@ where
         for<'c> &'c mut <D::DB as Database>::Connection:
             sqlx_core::executor::Executor<'c, Database = D::DB>,
     {
-        db.query(BelongsTo::<T, K>::optional(self.key.clone()))
-            .first()
-            .await
+        let relation = match self.target_column {
+            Some(column) => BelongsTo::<T, K>::optional_with_column(self.key.clone(), column),
+            None => BelongsTo::<T, K>::optional(self.key.clone()),
+        };
+        db.query(relation).first().await
     }
 }
 
@@ -332,6 +399,11 @@ where
     type Table = T;
 
     fn into_select(self, db: &Db<D>) -> Select<D, T> {
-        BelongsTo::<T, K>::optional(self.key).into_select(db)
+        match self.target_column {
+            Some(column) => {
+                BelongsTo::<T, K>::optional_with_column(self.key, column).into_select(db)
+            }
+            None => BelongsTo::<T, K>::optional(self.key).into_select(db),
+        }
     }
 }

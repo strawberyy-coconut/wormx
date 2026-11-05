@@ -1,5 +1,6 @@
 wormx::table!("public.wormx_users");
 wormx::table!("public.wormx_todos");
+wormx::table!("public.wormx_reviews");
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, sqlx::Type)]
 #[sqlx(type_name = "wormx_mood", rename_all = "lowercase")]
@@ -149,6 +150,50 @@ mod tests {
                 .loaded()
                 .expect("user relation was included")
                 .id,
+            1
+        );
+    }
+
+    #[tokio::test]
+    async fn loads_multiple_incoming_foreign_keys() {
+        let pool = sqlx::PgPool::connect(env!("DATABASE_URL"))
+            .await
+            .expect("connect to Postgres fixture database");
+        let db = wormx::Db::new(pool, wormx::PostgresDialect);
+
+        let user = db
+            .query(WormxUsers::all())
+            .first()
+            .await
+            .expect("load fixture user")
+            .expect("user exists");
+
+        let authored = db
+            .query(user.author_wormx_reviews())
+            .exec()
+            .await
+            .expect("load authored reviews");
+        assert_eq!(authored.len(), 1);
+
+        let reviewed = db
+            .query(user.reviewer_wormx_reviews())
+            .exec()
+            .await
+            .expect("load reviewed reviews");
+        assert_eq!(reviewed.len(), 1);
+
+        let users = db
+            .query(WormxUsers::all())
+            .include(WormxUsers::fields().author_wormx_reviews())
+            .exec()
+            .await
+            .expect("eager load multiple incoming foreign keys");
+        assert_eq!(
+            users[0]
+                .author_wormx_reviews()
+                .loaded()
+                .expect("authored reviews were included")
+                .len(),
             1
         );
     }

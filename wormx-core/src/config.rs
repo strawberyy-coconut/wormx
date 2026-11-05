@@ -190,15 +190,21 @@ impl Config {
             .type_overrides
             .extend(wormx.macros.type_overrides.clone());
 
+        // Merge per column: wormx.toml wins for conflicting columns, but keys
+        // that only appear in sqlx.toml are preserved.
         for (table, columns) in &sqlx.macros.table_overrides {
             config
                 .table_overrides
-                .insert(table.clone(), columns.clone());
+                .entry(table.clone())
+                .or_default()
+                .extend(columns.clone());
         }
         for (table, columns) in &wormx.macros.table_overrides {
             config
                 .table_overrides
-                .insert(table.clone(), columns.clone());
+                .entry(table.clone())
+                .or_default()
+                .extend(columns.clone());
         }
 
         config.preferred_date_time = parse_date_time(
@@ -367,6 +373,7 @@ mod tests {
 
             [macros.table-overrides.users]
             name = "String"
+            email = "String"
             "#,
         )
         .unwrap();
@@ -395,6 +402,7 @@ mod tests {
         assert_eq!(config.type_override("uuid"), Some("uuid::Uuid"));
         assert_eq!(config.type_override("mood"), Some("crate::Mood"));
         assert_eq!(config.column_override("users", "name"), Some("crate::Name"));
+        assert_eq!(config.column_override("users", "email"), Some("String"));
         assert_eq!(
             config.tables.get("users").unwrap().struct_name.as_deref(),
             Some("User")

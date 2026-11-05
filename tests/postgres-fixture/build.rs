@@ -11,6 +11,7 @@ fn main() {
     client
         .batch_execute(
             r#"
+            DROP TABLE IF EXISTS public.wormx_reviews CASCADE;
             DROP TABLE IF EXISTS public.wormx_todos CASCADE;
             DROP TABLE IF EXISTS public.wormx_users CASCADE;
             DROP TYPE IF EXISTS public.wormx_mood CASCADE;
@@ -39,6 +40,16 @@ fn main() {
 
             INSERT INTO public.wormx_todos (user_id, title)
             VALUES (1, 'Write the ORM'), (1, 'Add relations');
+
+            CREATE TABLE public.wormx_reviews (
+                id BIGSERIAL PRIMARY KEY,
+                author_id BIGINT NOT NULL REFERENCES public.wormx_users(id),
+                reviewer_id BIGINT NOT NULL REFERENCES public.wormx_users(id),
+                body TEXT NOT NULL
+            );
+
+            INSERT INTO public.wormx_reviews (author_id, reviewer_id, body)
+            VALUES (1, 1, 'Looks good');
             "#,
         )
         .expect("create Postgres fixture schema");

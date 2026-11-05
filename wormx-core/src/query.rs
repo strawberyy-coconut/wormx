@@ -4,7 +4,7 @@ use std::marker::PhantomData;
 
 use sqlx_core::database::Database;
 use sqlx_core::encode::Encode;
-use sqlx_core::error::Result;
+use sqlx_core::error::{Error, Result};
 use sqlx_core::executor::Executor;
 use sqlx_core::from_row::FromRow;
 use sqlx_core::query_as::query_as_with;
@@ -211,6 +211,7 @@ pub struct ProjectedSelect<D: Dialect + Clone, T: Table + 'static, P: Projection
     groups: Vec<Expr<(), D>>,
     having: Vec<Expr<bool, D>>,
     ctes: Vec<Cte<D>>,
+    dropped_includes: bool,
     _source: PhantomData<fn() -> T>,
 }
 
@@ -342,6 +343,16 @@ where
         self
     }
 
+    fn ensure_no_dropped_includes(&self) -> Result<()> {
+        if self.dropped_includes {
+            return Err(Error::InvalidArgument(
+                "eager loading cannot be applied after .select(...); add .include(...) to the row query instead"
+                    .to_owned(),
+            ));
+        }
+        Ok(())
+    }
+
     /// Executes the query and returns the first row.
     pub async fn first(mut self) -> Result<Option<P::Output>>
     where
@@ -361,6 +372,7 @@ where
         <D::DB as Database>::Arguments: sqlx_core::arguments::IntoArguments<D::DB>,
         for<'c> &'c mut <D::DB as Database>::Connection: Executor<'c, Database = D::DB>,
     {
+        self.ensure_no_dropped_includes()?;
         let mut writer = SqlWriter::new(self.db.dialect());
         write_ctes(&mut writer, &mut self.ctes)?;
         D::Select::default().write(
@@ -396,6 +408,7 @@ where
         <D::DB as Database>::Arguments: sqlx_core::arguments::IntoArguments<D::DB>,
         for<'c> &'c mut <D::DB as Database>::Connection: Executor<'c, Database = D::DB>,
     {
+        self.ensure_no_dropped_includes()?;
         let mut writer = SqlWriter::new(self.db.dialect());
         write_ctes(&mut writer, &mut self.ctes)?;
         D::Select::default().write(
@@ -460,6 +473,7 @@ where
         <D::DB as Database>::Arguments: sqlx_core::arguments::IntoArguments<D::DB>,
         for<'c> &'c mut <D::DB as Database>::Connection: Executor<'c, Database = D::DB>,
     {
+        self.ensure_no_dropped_includes()?;
         let mut writer = SqlWriter::new(self.db.dialect());
         write_ctes(&mut writer, &mut self.ctes)?;
         D::Select::default().write_count(
@@ -630,8 +644,32 @@ impl<D: Dialect> SelectRenderer<D> for SqlSelect {
     where
         P: ProjectionWriter<D> + CountProjection<D>,
     {
+        if distinct {
+            writer.write_select(false);
+            plan.projection.write_count(writer, true)?;
+            write_from_filters(writer, plan.table, plan.filters, plan.joins)?;
+            write_tail(writer, plan.tail);
+            return Ok(());
+        }
+
+        // `SELECT COUNT(*)` over a DISTINCT or grouped query must count the
+        // resulting rows, not the rows before DISTINCT/GROUP BY.
+        if plan.distinct || !plan.groups.is_empty() || !plan.having.is_empty() {
+            writer.write_select(false);
+            writer.write_count_star();
+            writer.push(" FROM (");
+            writer.write_select(plan.distinct);
+            plan.projection.write(writer)?;
+            write_from_filters(writer, plan.table, plan.filters, plan.joins)?;
+            write_groups_having(writer, plan.groups, plan.having)?;
+            writer.push(") AS ");
+            writer.push_ident("wormx_count");
+            write_tail(writer, plan.tail);
+            return Ok(());
+        }
+
         writer.write_select(false);
-        plan.projection.write_count(writer, distinct)?;
+        plan.projection.write_count(writer, false)?;
         write_from_filters(writer, plan.table, plan.filters, plan.joins)?;
         write_tail(writer, plan.tail);
         Ok(())
@@ -642,7 +680,20 @@ impl<D: Dialect> SelectRenderer<D> for SqlSelect {
         plan: CountPlan<'_, D>,
         writer: &mut SqlWriter<'_, D>,
     ) -> Result<()> {
-        writer.write_select(plan.distinct);
+        if plan.distinct {
+            writer.write_select(false);
+            writer.write_count_star();
+            writer.push(" FROM (");
+            writer.write_select(true);
+            writer.write_star();
+            write_from_filters(writer, plan.table, plan.filters, plan.joins)?;
+            writer.push(") AS ");
+            writer.push_ident("wormx_count");
+            write_tail(writer, plan.tail);
+            return Ok(());
+        }
+
+        writer.write_select(false);
         writer.write_count_star();
         write_from_filters(writer, plan.table, plan.filters, plan.joins)?;
         write_tail(writer, plan.tail);
@@ -759,6 +810,13 @@ pub struct SqlUpdate;
 
 impl<D: Dialect> UpdateRenderer<D> for SqlUpdate {
     fn write(&self, plan: UpdatePlan<'_, D>, writer: &mut SqlWriter<'_, D>) -> Result<()> {
+        if plan.assignments.is_empty() {
+            return Err(Error::InvalidArgument(
+                "UPDATE requires at least one assignment; call .set(...) or .set_raw(...)"
+                    .to_owned(),
+            ));
+        }
+
         writer.write_update();
         plan.table.render(writer);
         writer.write_set();
@@ -808,6 +866,17 @@ pub struct SqlUpsert;
 
 impl<D: Dialect> UpsertRenderer<D> for SqlUpsert {
     fn write(&self, plan: UpsertPlan<'_, D>, writer: &mut SqlWriter<'_, D>) -> Result<()> {
+        if plan.conflict_columns.is_empty() {
+            return Err(Error::InvalidArgument(
+                "UPSERT requires at least one conflict column; call .conflict_on(...)".to_owned(),
+            ));
+        }
+        if plan.assignments.is_empty() {
+            return Err(Error::InvalidArgument(
+                "UPSERT requires at least one .update(...) assignment".to_owned(),
+            ));
+        }
+
         writer.write_insert();
         plan.table.render(writer);
         writer.write_group_start();
@@ -1337,6 +1406,7 @@ impl<D: Dialect + Clone, T: Table + 'static> Select<D, T> {
     where
         P: Projection<D>,
     {
+        let dropped_includes = !self.includes.is_empty();
         ProjectedSelect {
             db: self.db,
             source: self.source,
@@ -1351,6 +1421,7 @@ impl<D: Dialect + Clone, T: Table + 'static> Select<D, T> {
             groups: Vec::new(),
             having: Vec::new(),
             ctes: self.ctes,
+            dropped_includes,
             _source: PhantomData,
         }
     }

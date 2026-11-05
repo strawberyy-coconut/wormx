@@ -5,6 +5,7 @@
 //! - `wormx-drivers-postgres`
 //! - `wormx-drivers-sqlite`
 //! - `wormx-drivers-mysql`
+//! - `wormx-drivers-mssql`
 //!
 //! This crate re-exports them behind feature flags so applications can depend on one crate.
 

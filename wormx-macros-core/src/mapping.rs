@@ -48,10 +48,10 @@ where
         Err(error) => {
             let hint = if let Some(feature) = DB::get_feature_gate(info) {
                 format!(
-                    "enable the `{feature}` Cargo feature on wormx, or add a `[types]` override in wormx.toml"
+                    "enable the `{feature}` Cargo feature on wormx, or add a `[macros.type-overrides]` entry in wormx.toml"
                 )
             } else {
-                "add a `[types]` override in wormx.toml".to_owned()
+                "add a `[macros.type-overrides]` entry in wormx.toml".to_owned()
             };
 
             Err(syn::Error::new(

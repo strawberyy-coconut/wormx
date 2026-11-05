@@ -6,7 +6,7 @@
 use std::marker::PhantomData;
 
 use sqlx_core::database::Database;
-use sqlx_core::error::Result;
+use sqlx_core::error::{Error, Result};
 use sqlx_core::executor::Executor;
 use sqlx_core::from_row::FromRow;
 use sqlx_core::query::query_with;
@@ -240,6 +240,13 @@ impl<D: Dialect + Clone, T: Table> Update<D, T> {
     }
 
     fn render(&mut self, returning: bool) -> Result<(String, <D::DB as Database>::Arguments)> {
+        if self.assignments.is_empty() {
+            return Err(Error::InvalidArgument(
+                "UPDATE requires at least one assignment; call .set(...) or .set_raw(...)"
+                    .to_owned(),
+            ));
+        }
+
         let mut writer = SqlWriter::new(self.db.dialect());
         D::Update::default().write(
             UpdatePlan {
@@ -453,7 +460,27 @@ impl<D: Dialect + Clone, T: Table> Upsert<D, T> {
             .await
     }
 
+    /// Executes the statement inside a transaction and returns the affected row.
+    pub async fn exec_returning_in(mut self, tx: &mut Transaction<'_, D>) -> Result<T>
+    where
+        D: SupportsReturning,
+        T: Send + Unpin + for<'r> FromRow<'r, <D::DB as Database>::Row>,
+        <D::DB as Database>::Arguments: sqlx_core::arguments::IntoArguments<D::DB>,
+        for<'c> &'c mut <D::DB as Database>::Connection: Executor<'c, Database = D::DB>,
+    {
+        let (sql, arguments) = self.render(true)?;
+        query_as_with::<D::DB, T, _>(AssertSqlSafe(sql).into_sql_str(), arguments)
+            .fetch_one(tx.connection())
+            .await
+    }
+
     fn render(&mut self, returning: bool) -> Result<(String, <D::DB as Database>::Arguments)> {
+        if self.columns.is_empty() {
+            return Err(Error::InvalidArgument(
+                "UPSERT requires at least one .value(...) for the inserted row".to_owned(),
+            ));
+        }
+
         let mut writer = SqlWriter::new(self.db.dialect());
         D::Upsert::default().write(
             UpsertPlan {

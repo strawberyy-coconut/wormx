@@ -1,8 +1,8 @@
 //! PostgreSQL support for wormx, built on `sqlx-postgres`.
 
 use wormx_core::{
-    Dialect, SqlSyntax, SupportsArrays, SupportsFullTextSearch, SupportsJson, SupportsReturning,
-    SupportsUpsert,
+    Dialect, SqlSyntax, SupportsArrays, SupportsFullJoin, SupportsFullTextSearch, SupportsJson,
+    SupportsReturning, SupportsUpsert,
 };
 
 /// The PostgreSQL dialect marker.
@@ -26,6 +26,7 @@ impl Dialect for PostgresDialect {
 impl SqlSyntax for PostgresDialect {}
 
 impl SupportsReturning for PostgresDialect {}
+impl SupportsFullJoin for PostgresDialect {}
 impl SupportsFullTextSearch for PostgresDialect {}
 impl SupportsJson for PostgresDialect {}
 impl SupportsArrays for PostgresDialect {}
@@ -169,6 +170,7 @@ mod macros {
             let referenced_by = query(AssertSqlSafe(
                 r#"
                 SELECT
+                    con.conname AS name,
                     n.nspname AS source_schema,
                     c.relname AS source_table,
                     array_agg(a.attname ORDER BY k.ord) AS columns,
@@ -189,8 +191,8 @@ mod macros {
                  AND fa.attnum = fk.attnum
                 WHERE con.contype = 'f'
                   AND con.confrelid = $1::regclass
-                GROUP BY n.nspname, c.relname
-                ORDER BY n.nspname, c.relname
+                GROUP BY con.conname, n.nspname, c.relname
+                ORDER BY n.nspname, c.relname, con.conname
                 "#,
             ))
             .bind(&regclass)
@@ -215,12 +217,8 @@ mod macros {
     }
 
     /// The compile-time table driver for this database.
-    pub const POSTGRES: TableDriver = TableDriver::new_with_fns::<Postgres>(
-        "::wormx::sqlx::Postgres",
-        &["postgres", "postgresql"],
-        describe,
-        constraints,
-    );
+    pub const POSTGRES: TableDriver =
+        TableDriver::new_with_fns::<Postgres>(&["postgres", "postgresql"], describe, constraints);
 
     fn quote_table(table: &TableRef) -> String {
         match &table.schema {

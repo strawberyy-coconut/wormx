@@ -1,8 +1,8 @@
 //! Microsoft SQL Server support for wormx, built on `sqlx-mssql-rs`.
 
-use sqlx_core::error::Result;
+use sqlx_core::error::{Error, Result};
 use wormx_core::{
-    Delete, Dialect, ProjectedSelect, Projection, Select, SqlSyntax, SqlWriter,
+    Delete, Dialect, ProjectedSelect, Projection, Select, SqlSyntax, SqlWriter, SupportsFullJoin,
     SupportsFullTextSearch, SupportsUpsert, Table, TableSource, Update, Upsert, UpsertPlan,
     UpsertRenderer,
 };
@@ -210,6 +210,12 @@ impl UpsertRenderer<MssqlDialect> for MssqlUpsert {
         plan: UpsertPlan<'_, MssqlDialect>,
         writer: &mut SqlWriter<'_, MssqlDialect>,
     ) -> Result<()> {
+        if plan.conflict_columns.is_empty() {
+            return Err(Error::InvalidArgument(
+                "UPSERT requires at least one conflict column; call .conflict_on(...)".to_owned(),
+            ));
+        }
+
         writer.push("MERGE INTO ");
         push_table(writer, plan.table.def);
 
@@ -295,6 +301,7 @@ fn push_qualified(writer: &mut SqlWriter<'_, MssqlDialect>, alias: &str, column:
     writer.push_ident(column);
 }
 
+impl SupportsFullJoin for MssqlDialect {}
 impl SupportsFullTextSearch for MssqlDialect {}
 impl SupportsUpsert for MssqlDialect {}
 
@@ -471,6 +478,7 @@ mod macros {
             SELECT
                 s.name AS source_schema,
                 t.name AS source_table,
+                fk.name AS name,
                 c.name AS column_name,
                 c.is_nullable AS column_nullable,
                 rc.name AS ref_column
@@ -498,11 +506,12 @@ mod macros {
             .fetch_all(connection)
             .await?;
 
-        let mut grouped: BTreeMap<String, IncomingForeignKey> = BTreeMap::new();
+        let mut grouped: BTreeMap<(String, String, String), IncomingForeignKey> = BTreeMap::new();
         for row in rows {
             let schema: String = row.try_get("source_schema")?;
             let table: String = row.try_get("source_table")?;
-            let key = format!("{schema}.{table}");
+            let name: String = row.try_get("name")?;
+            let key = (schema.clone(), table.clone(), name);
             let entry = grouped.entry(key).or_insert_with(|| IncomingForeignKey {
                 source_table: TableRef {
                     schema: Some(schema),
@@ -522,7 +531,6 @@ mod macros {
 
     /// The compile-time table driver for this database.
     pub const MSSQL: TableDriver = TableDriver::new_with_fns::<Mssql>(
-        "sqlx_mssql_rs::Mssql",
         &["mssql", "sqlserver", "sql-server"],
         describe,
         constraints,

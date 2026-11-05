@@ -63,6 +63,29 @@ fn main() {
                 PRIMARY KEY (user_id, team_id)
             );
 
+            CREATE TABLE profiles (
+                id INTEGER PRIMARY KEY,
+                handle TEXT NOT NULL UNIQUE,
+                name TEXT NOT NULL
+            );
+
+            CREATE TABLE profile_links (
+                id INTEGER PRIMARY KEY,
+                handle TEXT NOT NULL REFERENCES profiles(handle),
+                label TEXT NOT NULL
+            );
+
+            CREATE TABLE implicit_parents (
+                id INTEGER PRIMARY KEY,
+                name TEXT NOT NULL
+            );
+
+            CREATE TABLE implicit_children (
+                id INTEGER PRIMARY KEY,
+                parent_id INTEGER NOT NULL REFERENCES implicit_parents,
+                label TEXT NOT NULL
+            );
+
             INSERT INTO users (id, name, email, active)
             VALUES (1, 'Alice', NULL, 1);
 
@@ -81,6 +104,17 @@ fn main() {
             INSERT INTO teams (id, name) VALUES (1, 'Core'), (2, 'Docs');
 
             INSERT INTO user_teams (user_id, team_id) VALUES (1, 1), (1, 2);
+
+            INSERT INTO profiles (id, handle, name)
+            VALUES (1, 'alice', 'Alice Profile'), (2, 'bob', 'Bob Profile');
+
+            INSERT INTO profile_links (id, handle, label)
+            VALUES (1, 'alice', 'primary'), (2, 'bob', 'secondary');
+
+            INSERT INTO implicit_parents (id, name) VALUES (1, 'Parent');
+
+            INSERT INTO implicit_children (id, parent_id, label)
+            VALUES (1, 1, 'First Child'), (2, 1, 'Second Child');
             "#,
         )
         .expect("create fixture schema");

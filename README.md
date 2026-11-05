@@ -601,7 +601,8 @@ Supported directly:
 - `DISTINCT`
 - `WHERE` with SQL precedence preserved by explicit grouping
 - `IN`, `NOT IN`, `IN (subquery)`
-- `JOIN` / `LEFT JOIN` / `RIGHT JOIN` / `FULL JOIN`
+- `JOIN` / `LEFT JOIN` / `RIGHT JOIN` / `FULL JOIN` (`FULL JOIN` only for
+  dialects implementing `SupportsFullJoin`; MySQL and MariaDB do not)
 - `GROUP BY` and `HAVING`
 - `ORDER BY`, `LIMIT`, `OFFSET`
 - `COUNT(*)`, `COUNT(expr)`, `COUNT(DISTINCT expr)`
@@ -706,7 +707,9 @@ Environment variables:
 generated code, so changing them causes Cargo to rebuild the crate.
 
 A `.env` file is read from the manifest directory and its ancestors. Real
-environment variables take precedence.
+environment variables take precedence. Cargo does not track file reads made by
+proc macros, so after changing only `.env`, touch a source file or clean the
+crate to make the macro run again.
 
 ## Extending a dialect
 
@@ -844,11 +847,13 @@ impl wormx::SqlSyntax for MssqlDialect {
 ```
 
 Capabilities are marker traits, not a separate boolean table. For example,
-`SupportsReturning` gates `exec_returning`, and `SupportsUpsert` gates
-`Db::upsert`; an unsupported operation is a compile-time error instead of a
-rendered statement that the database rejects.
+`SupportsReturning` gates `exec_returning`, `SupportsFullJoin` gates
+`Join::full`, and `SupportsUpsert` gates `Db::upsert`; an unsupported operation
+is a compile-time error instead of a rendered statement that the database
+rejects.
 
 ```rust
+impl wormx::SupportsFullJoin for MssqlDialect {}
 impl wormx::SupportsFullTextSearch for MssqlDialect {}
 impl wormx::SupportsUpsert for MssqlDialect {}
 ```
@@ -914,7 +919,6 @@ be as thin as:
 
 ```rust
 const DRIVER: TableDriver = TableDriver::new_with_fns::<sqlx_mssql_rs::Mssql>(
-    "sqlx_mssql_rs::Mssql",
     &["mssql"], // aliases, no core patch needed
     describe_mssql,
     constraints_mssql,

@@ -2,7 +2,7 @@
 
 use sqlx_core::error::Result;
 
-use crate::dialect::{Dialect, Expr, SqlWriter};
+use crate::dialect::{Dialect, Expr, SqlWriter, SupportsFullJoin};
 use crate::metadata::TableDef;
 use crate::query::Subquery;
 
@@ -93,7 +93,11 @@ impl<D: Dialect> Join<D> {
         Self::table(JoinKind::Right, source, on)
     }
 
-    pub fn full(source: TableSource, on: Expr<bool, D>) -> Self {
+    /// Creates a `FULL JOIN`, available only for dialects that support it.
+    pub fn full(source: TableSource, on: Expr<bool, D>) -> Self
+    where
+        D: SupportsFullJoin,
+    {
         Self::table(JoinKind::Full, source, on)
     }
 

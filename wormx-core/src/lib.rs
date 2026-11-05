@@ -19,9 +19,9 @@ pub use db::{Db, RawQuery, Transaction};
 pub use deferred::Deferred;
 pub use dialect::{
     BindExpr, ColumnExpr, Dialect, Expr, Fixity, Function, FunctionArgs, IntoExpr, Operator,
-    OperatorExpr, RenderExpr, SqlSyntax, SqlWriter, SupportsArrays, SupportsFullTextSearch,
-    SupportsJson, SupportsReturning, SupportsUpsert, Textual, Window, call, coalesce, count_star,
-    dense_rank, rank, row_number,
+    OperatorExpr, RenderExpr, SqlSyntax, SqlWriter, SupportsArrays, SupportsFullJoin,
+    SupportsFullTextSearch, SupportsJson, SupportsReturning, SupportsUpsert, Textual, Window, call,
+    coalesce, count_star, dense_rank, rank, row_number,
 };
 pub use dml::{Delete, Insert, Update, Upsert};
 pub use include::Include;

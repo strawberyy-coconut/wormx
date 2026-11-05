@@ -5,6 +5,10 @@ wormx::table!("orders");
 wormx::table!("shipments");
 wormx::table!("teams");
 wormx::table!("user_teams");
+wormx::table!("profiles");
+wormx::table!("profile_links");
+wormx::table!("implicit_parents");
+wormx::table!("implicit_children");
 
 wormx::sql_function! {
     pub fn lower(value: String) -> String;
@@ -47,6 +51,7 @@ pub fn users_table() -> &'static wormx::TableDef {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use wormx::Table;
 
     #[test]
     fn metadata_is_generated() {
@@ -929,5 +934,247 @@ mod tests {
         assert_eq!(teams.len(), 2);
         assert_eq!(teams[0].name, "Core");
         assert_eq!(teams[1].name, "Docs");
+    }
+
+    #[tokio::test]
+    async fn loads_belongs_to_on_unique_non_primary_key() {
+        let pool = sqlx::SqlitePool::connect(env!("DATABASE_URL"))
+            .await
+            .expect("connect to fixture database");
+        let db = wormx::Db::new(pool, wormx::SqliteDialect);
+
+        let link = db
+            .query(ProfileLinks::get(1_i64))
+            .first()
+            .await
+            .expect("load profile link")
+            .expect("profile link exists");
+
+        let profile = link
+            .profiles()
+            .first(&db)
+            .await
+            .expect("load belongs-to by unique column")
+            .expect("profile exists");
+        assert_eq!(profile.name, "Alice Profile");
+
+        let profile = db
+            .query(link.profiles())
+            .first()
+            .await
+            .expect("query belongs-to by unique column")
+            .expect("profile exists");
+        assert_eq!(profile.handle, "alice");
+
+        let links = db
+            .query(ProfileLinks::all())
+            .include(ProfileLinks::fields().profiles())
+            .order_by(ProfileLinks::fields().id().asc())
+            .exec()
+            .await
+            .expect("eager load belongs-to by unique column");
+
+        assert_eq!(
+            links[0]
+                .profiles()
+                .loaded()
+                .expect("profile was included")
+                .name,
+            "Alice Profile"
+        );
+    }
+
+    #[tokio::test]
+    async fn loads_sqlite_implicit_foreign_key_references() {
+        let pool = sqlx::SqlitePool::connect(env!("DATABASE_URL"))
+            .await
+            .expect("connect to fixture database");
+        let db = wormx::Db::new(pool, wormx::SqliteDialect);
+
+        assert!(
+            ImplicitChildren::DEF
+                .relations
+                .iter()
+                .any(|relation| relation.name == "parent")
+        );
+        assert!(
+            ImplicitParents::DEF
+                .relations
+                .iter()
+                .any(|relation| relation.name == "implicit_children")
+        );
+
+        let children = db
+            .query(ImplicitChildren::all())
+            .include(ImplicitChildren::fields().parent())
+            .order_by(ImplicitChildren::fields().id().asc())
+            .exec()
+            .await
+            .expect("eager load implicit belongs-to");
+
+        assert_eq!(children.len(), 2);
+        assert_eq!(
+            children[0]
+                .parent()
+                .loaded()
+                .expect("implicit parent was included")
+                .name,
+            "Parent"
+        );
+
+        let parents = db
+            .query(ImplicitParents::all())
+            .include(ImplicitParents::fields().implicit_children())
+            .exec()
+            .await
+            .expect("eager load implicit has-many");
+
+        assert_eq!(
+            parents[0]
+                .implicit_children()
+                .loaded()
+                .expect("implicit children were included")
+                .len(),
+            2
+        );
+    }
+
+    #[tokio::test]
+    async fn include_assigns_children_to_duplicate_parent_rows() {
+        let pool = sqlx::SqlitePool::connect(env!("DATABASE_URL"))
+            .await
+            .expect("connect to fixture database");
+        let db = wormx::Db::new(pool, wormx::SqliteDialect);
+
+        let users = db
+            .query(Users::all())
+            .join(wormx::Join::inner(
+                UserTeams::fields().table(),
+                Users::fields().id().eq(UserTeams::fields().user_id()),
+            ))
+            .include(Users::fields().user_todos())
+            .exec()
+            .await
+            .expect("eager load has-many with duplicate parents");
+
+        assert_eq!(users.len(), 2);
+        for user in &users {
+            assert_eq!(
+                user.user_todos()
+                    .loaded()
+                    .expect("todos were included")
+                    .len(),
+                2
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn distinct_and_grouped_counts_count_result_rows() {
+        let pool = sqlx::SqlitePool::connect(env!("DATABASE_URL"))
+            .await
+            .expect("connect to fixture database");
+        let db = wormx::Db::new(pool, wormx::SqliteDialect);
+
+        let distinct_users = db
+            .query(Todos::all())
+            .distinct()
+            .select(Todos::fields().user_id())
+            .count()
+            .await
+            .expect("count distinct projection");
+        assert_eq!(distinct_users, 1);
+
+        let groups = db
+            .query(Todos::all())
+            .select(Todos::fields().user_id())
+            .group_by(Todos::fields().user_id())
+            .count()
+            .await
+            .expect("count grouped projection");
+        assert_eq!(groups, 1);
+    }
+
+    #[tokio::test]
+    async fn offset_without_limit_works_on_sqlite() {
+        let pool = sqlx::SqlitePool::connect(env!("DATABASE_URL"))
+            .await
+            .expect("connect to fixture database");
+        let db = wormx::Db::new(pool, wormx::SqliteDialect);
+
+        let todos = db
+            .query(Todos::all())
+            .order_by(Todos::fields().id().asc())
+            .offset(1)
+            .exec()
+            .await
+            .expect("run offset without limit");
+
+        assert_eq!(todos.len(), 1);
+        assert_eq!(todos[0].id, 2);
+    }
+
+    #[tokio::test]
+    async fn supports_full_join_on_sqlite() {
+        let pool = sqlx::SqlitePool::connect(env!("DATABASE_URL"))
+            .await
+            .expect("connect to fixture database");
+        let db = wormx::Db::new(pool, wormx::SqliteDialect);
+
+        let rows: Vec<i64> = db
+            .query(Users::all())
+            .join(wormx::Join::full(
+                Todos::alias("t").table(),
+                Users::fields().id().eq(Todos::alias("t").user_id()),
+            ))
+            .select(Users::fields().id())
+            .exec()
+            .await
+            .expect("run FULL JOIN");
+
+        assert_eq!(rows.len(), 2);
+    }
+
+    #[tokio::test]
+    async fn invalid_update_and_upsert_are_rejected() {
+        let pool = sqlx::SqlitePool::connect(env!("DATABASE_URL"))
+            .await
+            .expect("connect to fixture database");
+        let db = wormx::Db::new(pool, wormx::SqliteDialect);
+
+        let error = db
+            .update::<Users>()
+            .filter(Users::fields().id().eq(1_i64))
+            .exec()
+            .await
+            .expect_err("UPDATE without assignments must fail");
+        assert!(error.to_string().contains("UPDATE requires"));
+
+        let error = db
+            .upsert::<Users>()
+            .value(Users::fields().id(), 1_i64)
+            .conflict_on(Users::fields().id())
+            .exec()
+            .await
+            .expect_err("UPSERT without assignments must fail");
+        assert!(error.to_string().contains("UPSERT requires"));
+
+        let error = db
+            .upsert::<Users>()
+            .value(Users::fields().id(), 1_i64)
+            .update(Users::fields().name(), "Alice")
+            .exec()
+            .await
+            .expect_err("UPSERT without conflict columns must fail");
+        assert!(error.to_string().contains("conflict column"));
+
+        let error = db
+            .query(Users::all())
+            .include(Users::fields().user_todos())
+            .select(Users::fields().id())
+            .exec()
+            .await
+            .expect_err("INCLUDE followed by SELECT must fail");
+        assert!(error.to_string().contains("after .select"));
     }
 }

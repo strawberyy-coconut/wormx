@@ -751,12 +751,20 @@ fn quote_api_impl(
             RelationKind::BelongsTo => {
                 let fk_field = relation.fk_field.as_ref().unwrap();
                 let key_ty = &relation.key_ty;
+                let target_column = syn::LitStr::new(
+                    relation
+                        .target_columns
+                        .first()
+                        .expect("belongs-to relation has a referenced column"),
+                    Span::call_site(),
+                );
                 let (return_ty, constructor) = if relation.key_nullable {
                     (
                         quote!(::wormx::OptionalBelongsToRef<'_, #target_ty, #key_ty>),
                         quote! {
-                            ::wormx::OptionalBelongsToRef::new(
+                            ::wormx::OptionalBelongsToRef::with_column(
                                 self.#fk_field.clone(),
+                                #target_column,
                                 &self.#field_ident,
                             )
                         },
@@ -765,8 +773,9 @@ fn quote_api_impl(
                     (
                         quote!(::wormx::BelongsToRef<'_, #target_ty, #key_ty>),
                         quote! {
-                            ::wormx::BelongsToRef::new(
+                            ::wormx::BelongsToRef::with_column(
                                 self.#fk_field.clone(),
+                                #target_column,
                                 &self.#field_ident,
                             )
                         },
@@ -1077,7 +1086,7 @@ fn quote_include_impls(struct_ident: &syn::Ident, relations: &[Relation]) -> Tok
         let pool_body = include_body(relation, false);
         let tx_body = include_body(relation, true);
 
-        let target_bound = quote!(#target_ty: ::wormx::Table);
+        let target_bound = quote!(#target_ty: ::wormx::Table + ::std::clone::Clone);
 
         quote! {
             pub struct #include_ident<D: ::wormx::Dialect + ::std::clone::Clone> {
@@ -1249,15 +1258,25 @@ fn include_body(relation: &Relation, in_transaction: bool) -> TokenStream {
                     #empty
                 }
 
-                let mut related: ::std::vec::Vec<#target_ty> = db
-                    .query(<#target_ty>::all())
-                    .filter(
-                        <#target_ty>::fields()
-                            .#target_pk_field()
-                            .in_list(keys),
-                    )
-                    .#exec
-                    .await?;
+                let keys = keys
+                    .into_iter()
+                    .collect::<::std::collections::HashSet<#key_ty>>()
+                    .into_iter()
+                    .collect::<::std::vec::Vec<#key_ty>>();
+                let mut related: ::std::vec::Vec<#target_ty> = ::std::vec::Vec::new();
+                for chunk in keys.chunks(900) {
+                    related.extend(
+                        db
+                            .query(<#target_ty>::all())
+                            .filter(
+                                <#target_ty>::fields()
+                                    .#target_pk_field()
+                                    .in_list(chunk.to_vec()),
+                            )
+                            .#exec
+                            .await?,
+                    );
+                }
 
                 for nested_include in nested {
                     nested_include.#apply.await?;
@@ -1310,15 +1329,25 @@ fn include_body(relation: &Relation, in_transaction: bool) -> TokenStream {
                     return ::std::result::Result::Ok(());
                 }
 
-                let mut related: ::std::vec::Vec<#target_ty> = db
-                    .query(<#target_ty>::all())
-                    .filter(
-                        <#target_ty>::fields()
-                            .#target_fk_field()
-                            .in_list(keys),
-                    )
-                    .#exec
-                    .await?;
+                let keys = keys
+                    .into_iter()
+                    .collect::<::std::collections::HashSet<#source_key_ty>>()
+                    .into_iter()
+                    .collect::<::std::vec::Vec<#source_key_ty>>();
+                let mut related: ::std::vec::Vec<#target_ty> = ::std::vec::Vec::new();
+                for chunk in keys.chunks(900) {
+                    related.extend(
+                        db
+                            .query(<#target_ty>::all())
+                            .filter(
+                                <#target_ty>::fields()
+                                    .#target_fk_field()
+                                    .in_list(chunk.to_vec()),
+                            )
+                            .#exec
+                            .await?,
+                    );
+                }
 
                 for nested_include in nested {
                     nested_include.#apply.await?;
@@ -1332,7 +1361,10 @@ fn include_body(relation: &Relation, in_transaction: bool) -> TokenStream {
 
                 for row in rows {
                     row.#field_ident.set(
-                        grouped.remove(&row.#source_key_field).unwrap_or_default(),
+                        grouped
+                            .get(&row.#source_key_field)
+                            .cloned()
+                            .unwrap_or_default(),
                     );
                 }
 
@@ -1355,6 +1387,7 @@ fn include_body_composite(relation: &Relation, in_transaction: bool) -> TokenStr
         quote!(apply(db, &mut related))
     };
     let key_tys = relation.source_key_tys.clone();
+    let key_len = key_tys.len();
     let key_ty: syn::Type = syn::parse_quote!((#(#key_tys),*));
 
     let filter = {
@@ -1382,7 +1415,7 @@ fn include_body_composite(relation: &Relation, in_transaction: bool) -> TokenStr
             let mut __filter: ::std::option::Option<
                 ::wormx::Expr<bool, D>,
             > = ::std::option::Option::None;
-            for key in keys {
+            for key in chunk.iter().cloned() {
                 let __current = #first #(.and(#rest))*;
                 __filter = ::std::option::Option::Some(match __filter {
                     ::std::option::Option::Some(existing) => existing.or(__current),
@@ -1508,13 +1541,23 @@ fn include_body_composite(relation: &Relation, in_transaction: bool) -> TokenStr
                     #empty
                 }
 
-                #filter
-
-                let mut related: ::std::vec::Vec<#target_ty> = db
-                    .query(<#target_ty>::all())
-                    .filter(__filter.unwrap())
-                    .#exec
-                    .await?;
+                let keys = keys
+                    .into_iter()
+                    .collect::<::std::collections::HashSet<#key_ty>>()
+                    .into_iter()
+                    .collect::<::std::vec::Vec<#key_ty>>();
+                let chunk_size = (900usize / #key_len).max(1);
+                let mut related: ::std::vec::Vec<#target_ty> = ::std::vec::Vec::new();
+                for chunk in keys.chunks(chunk_size) {
+                    #filter
+                    related.extend(
+                        db
+                            .query(<#target_ty>::all())
+                            .filter(__filter.unwrap())
+                            .#exec
+                            .await?,
+                    );
+                }
 
                 for nested_include in nested {
                     nested_include.#apply.await?;
@@ -1610,13 +1653,23 @@ fn include_body_composite(relation: &Relation, in_transaction: bool) -> TokenStr
                     return ::std::result::Result::Ok(());
                 }
 
-                #filter
-
-                let mut related: ::std::vec::Vec<#target_ty> = db
-                    .query(<#target_ty>::all())
-                    .filter(__filter.unwrap())
-                    .#exec
-                    .await?;
+                let keys = keys
+                    .into_iter()
+                    .collect::<::std::collections::HashSet<#key_ty>>()
+                    .into_iter()
+                    .collect::<::std::vec::Vec<#key_ty>>();
+                let chunk_size = (900usize / #key_len).max(1);
+                let mut related: ::std::vec::Vec<#target_ty> = ::std::vec::Vec::new();
+                for chunk in keys.chunks(chunk_size) {
+                    #filter
+                    related.extend(
+                        db
+                            .query(<#target_ty>::all())
+                            .filter(__filter.unwrap())
+                            .#exec
+                            .await?,
+                    );
+                }
 
                 for nested_include in nested {
                     nested_include.#apply.await?;
@@ -1630,7 +1683,10 @@ fn include_body_composite(relation: &Relation, in_transaction: bool) -> TokenStr
 
                 for row in rows {
                     row.#field.set(
-                        grouped.remove(&#remove_key).unwrap_or_default(),
+                        grouped
+                            .get(&#remove_key)
+                            .cloned()
+                            .unwrap_or_default(),
                     );
                 }
 
