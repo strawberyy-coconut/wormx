@@ -1,0 +1,32 @@
+[package]
+name = "wormx-drivers-mysql"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[dependencies]
+wormx-core = { path = "../../wormx-core", version = "0.1.0" }
+sqlx-core = { workspace = true }
+sqlx-mysql = { workspace = true }
+
+wormx-macros-core = { path = "../../wormx-macros-core", version = "0.1.0", optional = true, default-features = false }
+serde_json = { workspace = true, optional = true }
+tokio = { workspace = true, optional = true }
+
+[features]
+default = []
+macros = [
+    "dep:wormx-macros-core",
+    "dep:serde_json",
+    "dep:tokio",
+    "sqlx-core/offline",
+    "sqlx-mysql/offline",
+]
+
+chrono = ["sqlx-core/chrono", "sqlx-mysql/chrono"]
+time = ["sqlx-core/time", "sqlx-mysql/time"]
+uuid = ["sqlx-core/uuid", "sqlx-mysql/uuid"]
+json = ["sqlx-core/json", "sqlx-mysql/json"]
+bigdecimal = ["sqlx-core/bigdecimal", "sqlx-mysql/bigdecimal"]
+rust_decimal = ["sqlx-core/rust_decimal", "sqlx-mysql/rust_decimal"]

@@ -1,0 +1,97 @@
+{
+  "format": 1,
+  "db_name": "MSSQL",
+  "table": "app_users",
+  "schema": null,
+  "describe": {
+    "columns": [
+      {
+        "name": "id",
+        "nullable": false,
+        "ordinal": 0,
+        "type_info": {
+          "length": 8,
+          "precision": null,
+          "scale": null,
+          "sql_data_type": 127,
+          "type_name": "bigint"
+        }
+      },
+      {
+        "name": "name",
+        "nullable": false,
+        "ordinal": 1,
+        "type_info": {
+          "length": 400,
+          "precision": null,
+          "scale": null,
+          "sql_data_type": 231,
+          "type_name": "nvarchar"
+        }
+      },
+      {
+        "name": "email",
+        "nullable": true,
+        "ordinal": 2,
+        "type_info": {
+          "length": 400,
+          "precision": null,
+          "scale": null,
+          "sql_data_type": 231,
+          "type_name": "nvarchar"
+        }
+      },
+      {
+        "name": "active",
+        "nullable": false,
+        "ordinal": 3,
+        "type_info": {
+          "length": 1,
+          "precision": null,
+          "scale": null,
+          "sql_data_type": 50,
+          "type_name": "bit"
+        }
+      }
+    ],
+    "nullable": [
+      false,
+      false,
+      true,
+      false
+    ],
+    "parameters": {
+      "Left": []
+    }
+  },
+  "constraints": {
+    "primary_key": [
+      "id"
+    ],
+    "defaults": {
+      "active": "((1))"
+    },
+    "identity": [
+      "id"
+    ],
+    "generated": [],
+    "foreign_keys": [],
+    "referenced_by": [
+      {
+        "source_table": {
+          "schema": "dbo",
+          "name": "app_todos"
+        },
+        "columns": [
+          "user_id"
+        ],
+        "referenced_columns": [
+          "id"
+        ],
+        "columns_nullable": [
+          false
+        ]
+      }
+    ]
+  }
+}

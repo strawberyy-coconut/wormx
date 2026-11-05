@@ -1,0 +1,18 @@
+[package]
+name = "wormx-postgres-fixture"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish = false
+
+[dependencies]
+wormx = { path = "../..", features = ["macros", "postgres", "chrono", "json"] }
+sqlx = { workspace = true, features = ["runtime-tokio", "postgres", "chrono", "json", "derive"] }
+chrono = "0.4"
+serde_json = "1"
+
+[dev-dependencies]
+tokio = { workspace = true }
+
+[build-dependencies]
+postgres = { workspace = true }

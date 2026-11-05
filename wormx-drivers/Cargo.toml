@@ -1,0 +1,62 @@
+[package]
+name = "wormx-drivers"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[dependencies]
+wormx-drivers-postgres = { path = "wormx-drivers-postgres", version = "0.1.0", optional = true }
+wormx-drivers-sqlite = { path = "wormx-drivers-sqlite", version = "0.1.0", optional = true }
+wormx-drivers-mysql = { path = "wormx-drivers-mysql", version = "0.1.0", optional = true }
+wormx-drivers-mssql = { path = "wormx-drivers-mssql", version = "0.1.0", optional = true }
+
+[features]
+default = []
+
+postgres = ["dep:wormx-drivers-postgres"]
+sqlite = ["dep:wormx-drivers-sqlite"]
+mysql = ["dep:wormx-drivers-mysql"]
+mssql = ["dep:wormx-drivers-mssql"]
+
+macros-postgres = ["postgres", "wormx-drivers-postgres/macros"]
+macros-sqlite = ["sqlite", "wormx-drivers-sqlite/macros"]
+macros-mysql = ["mysql", "wormx-drivers-mysql/macros"]
+macros-mssql = ["mssql", "wormx-drivers-mssql/macros"]
+
+chrono = [
+    "wormx-drivers-postgres?/chrono",
+    "wormx-drivers-sqlite?/chrono",
+    "wormx-drivers-mysql?/chrono",
+    "wormx-drivers-mssql?/chrono",
+]
+time = [
+    "wormx-drivers-postgres?/time",
+    "wormx-drivers-sqlite?/time",
+    "wormx-drivers-mysql?/time",
+    "wormx-drivers-mssql?/time",
+]
+uuid = [
+    "wormx-drivers-postgres?/uuid",
+    "wormx-drivers-sqlite?/uuid",
+    "wormx-drivers-mysql?/uuid",
+    "wormx-drivers-mssql?/uuid",
+]
+json = [
+    "wormx-drivers-postgres?/json",
+    "wormx-drivers-sqlite?/json",
+    "wormx-drivers-mysql?/json",
+    "wormx-drivers-mssql?/json",
+]
+bigdecimal = [
+    "wormx-drivers-postgres?/bigdecimal",
+    "wormx-drivers-sqlite?/bigdecimal",
+    "wormx-drivers-mysql?/bigdecimal",
+    "wormx-drivers-mssql?/bigdecimal",
+]
+rust_decimal = [
+    "wormx-drivers-postgres?/rust_decimal",
+    "wormx-drivers-sqlite?/rust_decimal",
+    "wormx-drivers-mysql?/rust_decimal",
+    "wormx-drivers-mssql?/rust_decimal",
+]

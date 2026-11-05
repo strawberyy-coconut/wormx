@@ -1,0 +1,30 @@
+[package]
+name = "wormx-macros"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[lib]
+proc-macro = true
+
+[dependencies]
+wormx-macros-core = { path = "../wormx-macros-core", version = "0.1.0", default-features = false }
+wormx-drivers = { path = "../wormx-drivers", version = "0.1.0", optional = true, default-features = false }
+proc-macro2 = { workspace = true }
+syn = { workspace = true }
+quote = { workspace = true }
+
+[features]
+default = []
+postgres = ["dep:wormx-drivers", "wormx-drivers/macros-postgres"]
+sqlite = ["dep:wormx-drivers", "wormx-drivers/macros-sqlite"]
+mysql = ["dep:wormx-drivers", "wormx-drivers/macros-mysql"]
+mssql = ["dep:wormx-drivers", "wormx-drivers/macros-mssql"]
+
+chrono = ["wormx-drivers?/chrono"]
+time = ["wormx-drivers?/time"]
+uuid = ["wormx-drivers?/uuid"]
+json = ["wormx-drivers?/json"]
+bigdecimal = ["wormx-drivers?/bigdecimal"]
+rust_decimal = ["wormx-drivers?/rust_decimal"]

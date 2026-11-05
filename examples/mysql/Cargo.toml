@@ -1,0 +1,20 @@
+[package]
+name = "wormx-example-mysql"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.96"
+publish = false
+
+[dependencies]
+wormx = { path = "../..", features = ["macros", "mysql"] }
+sqlx = { version = "0.9.0", default-features = false, features = ["runtime-tokio"] }
+sqlx-mysql = "0.9.0"
+tokio = { version = "1", features = ["rt", "rt-multi-thread", "macros"] }
+
+[build-dependencies]
+sqlx-core = { version = "0.9.0", default-features = false }
+sqlx = { version = "0.9.0", default-features = false, features = ["runtime-tokio"] }
+sqlx-mysql = "0.9.0"
+tokio = { version = "1", features = ["rt", "macros"] }
+
+[workspace]

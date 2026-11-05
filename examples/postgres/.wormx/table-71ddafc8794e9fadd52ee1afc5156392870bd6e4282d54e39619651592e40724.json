@@ -1,0 +1,92 @@
+{
+  "format": 1,
+  "db_name": "PostgreSQL",
+  "table": "app_users",
+  "schema": null,
+  "describe": {
+    "columns": [
+      {
+        "name": "id",
+        "ordinal": 0,
+        "origin": {
+          "Table": {
+            "name": "id",
+            "table": "app_users"
+          }
+        },
+        "type_info": "Int8"
+      },
+      {
+        "name": "name",
+        "ordinal": 1,
+        "origin": {
+          "Table": {
+            "name": "name",
+            "table": "app_users"
+          }
+        },
+        "type_info": "Text"
+      },
+      {
+        "name": "email",
+        "ordinal": 2,
+        "origin": {
+          "Table": {
+            "name": "email",
+            "table": "app_users"
+          }
+        },
+        "type_info": "Text"
+      },
+      {
+        "name": "active",
+        "ordinal": 3,
+        "origin": {
+          "Table": {
+            "name": "active",
+            "table": "app_users"
+          }
+        },
+        "type_info": "Bool"
+      }
+    ],
+    "nullable": [
+      false,
+      false,
+      true,
+      false
+    ],
+    "parameters": {
+      "Left": []
+    }
+  },
+  "constraints": {
+    "primary_key": [
+      "id"
+    ],
+    "defaults": {
+      "active": "true",
+      "id": "nextval('app_users_id_seq'::regclass)"
+    },
+    "identity": [],
+    "generated": [],
+    "foreign_keys": [],
+    "referenced_by": [
+      {
+        "source_table": {
+          "schema": "public",
+          "name": "app_todos"
+        },
+        "columns": [
+          "user_id"
+        ],
+        "referenced_columns": [
+          "id"
+        ],
+        "columns_nullable": [
+          false
+        ]
+      }
+    ]
+  }
+}

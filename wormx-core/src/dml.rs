@@ -1,0 +1,423 @@
+//! `INSERT`, `UPDATE`, `DELETE`, and `UPSERT` builders.
+//!
+//! A builder owns typed values and hands a plan to the dialect's operation
+//! renderer. Execution stays in sqlx: the builder only decides what command to
+//! run and on which executor.
+
+use std::marker::PhantomData;
+
+use sqlx_core::database::Database;
+use sqlx_core::error::Result;
+use sqlx_core::executor::Executor;
+use sqlx_core::from_row::FromRow;
+use sqlx_core::query::query_with;
+use sqlx_core::query_as::query_as_with;
+use sqlx_core::sql_str::{AssertSqlSafe, SqlSafeStr};
+
+use crate::db::{Db, Transaction};
+use crate::dialect::{Dialect, Expr, IntoExpr, SqlWriter};
+use crate::metadata::Table;
+use crate::query::{
+    Column, DeletePlan, DeleteRenderer, InsertPlan, InsertRenderer, UpdatePlan, UpdateRenderer,
+    UpsertPlan, UpsertRenderer,
+};
+
+/// A pending `INSERT`.
+pub struct Insert<D: Dialect + Clone, T: Table> {
+    db: Db<D>,
+    columns: Vec<&'static str>,
+    values: Vec<Expr<(), D>>,
+    _marker: PhantomData<fn() -> T>,
+}
+
+impl<D: Dialect + Clone, T: Table> Insert<D, T> {
+    pub(crate) fn new(db: Db<D>) -> Self {
+        Self {
+            db,
+            columns: Vec::new(),
+            values: Vec::new(),
+            _marker: PhantomData,
+        }
+    }
+
+    /// Sets one column. Calling it again for the same column is an error at execution time.
+    pub fn value<C, V>(mut self, column: Column<C>, value: V) -> Self
+    where
+        C: 'static,
+        V: IntoExpr<C, D>,
+    {
+        self.columns.push(column.name());
+        self.values.push(value.into_expr().erase());
+        self
+    }
+
+    /// Sets a column to an arbitrary expression (for example `DEFAULT` or `NOW()`).
+    pub fn value_expr<C>(mut self, column: Column<C>, value: Expr<(), D>) -> Self {
+        self.columns.push(column.name());
+        self.values.push(value);
+        self
+    }
+
+    /// Appends a literal SQL expression as a value.
+    pub fn value_raw<C>(mut self, column: Column<C>, sql: impl Into<String>) -> Self {
+        self.values.push(Expr::raw(sql));
+        self.columns.push(column.name());
+        self
+    }
+
+    pub async fn exec(mut self) -> Result<<D::DB as Database>::QueryResult>
+    where
+        <D::DB as Database>::Arguments: sqlx_core::arguments::IntoArguments<D::DB>,
+        for<'c> &'c mut <D::DB as Database>::Connection: Executor<'c, Database = D::DB>,
+    {
+        let (sql, arguments) = self.render(false)?;
+        query_with::<D::DB, _>(AssertSqlSafe(sql).into_sql_str(), arguments)
+            .execute(self.db.pool())
+            .await
+    }
+
+    pub async fn exec_in(
+        mut self,
+        tx: &mut Transaction<'_, D>,
+    ) -> Result<<D::DB as Database>::QueryResult>
+    where
+        <D::DB as Database>::Arguments: sqlx_core::arguments::IntoArguments<D::DB>,
+        for<'c> &'c mut <D::DB as Database>::Connection: Executor<'c, Database = D::DB>,
+    {
+        let (sql, arguments) = self.render(false)?;
+        query_with::<D::DB, _>(AssertSqlSafe(sql).into_sql_str(), arguments)
+            .execute(tx.connection())
+            .await
+    }
+
+    /// Executes `INSERT ... RETURNING *` and decodes the inserted row.
+    pub async fn exec_returning(mut self) -> Result<T>
+    where
+        T: Send + Unpin + for<'r> FromRow<'r, <D::DB as Database>::Row>,
+        <D::DB as Database>::Arguments: sqlx_core::arguments::IntoArguments<D::DB>,
+        for<'c> &'c mut <D::DB as Database>::Connection: Executor<'c, Database = D::DB>,
+    {
+        let (sql, arguments) = self.render(true)?;
+        query_as_with::<D::DB, T, _>(AssertSqlSafe(sql).into_sql_str(), arguments)
+            .fetch_one(self.db.pool())
+            .await
+    }
+
+    /// Executes `INSERT ... RETURNING *` inside a transaction.
+    pub async fn exec_returning_in(mut self, tx: &mut Transaction<'_, D>) -> Result<T>
+    where
+        T: Send + Unpin + for<'r> FromRow<'r, <D::DB as Database>::Row>,
+        <D::DB as Database>::Arguments: sqlx_core::arguments::IntoArguments<D::DB>,
+        for<'c> &'c mut <D::DB as Database>::Connection: Executor<'c, Database = D::DB>,
+    {
+        let (sql, arguments) = self.render(true)?;
+        query_as_with::<D::DB, T, _>(AssertSqlSafe(sql).into_sql_str(), arguments)
+            .fetch_one(tx.connection())
+            .await
+    }
+
+    fn render(&mut self, returning: bool) -> Result<(String, <D::DB as Database>::Arguments)> {
+        let mut writer = SqlWriter::new(self.db.dialect());
+        D::Insert::default().write(
+            InsertPlan {
+                table: T::DEF,
+                columns: &self.columns,
+                values: &mut self.values,
+                returning,
+            },
+            &mut writer,
+        )?;
+        Ok(writer.finish())
+    }
+}
+
+/// A pending `UPDATE`.
+pub struct Update<D: Dialect + Clone, T: Table> {
+    db: Db<D>,
+    assignments: Vec<(&'static str, Expr<(), D>)>,
+    filters: Vec<Expr<bool, D>>,
+    _marker: PhantomData<fn() -> T>,
+}
+
+impl<D: Dialect + Clone, T: Table> Update<D, T> {
+    pub(crate) fn new(db: Db<D>) -> Self {
+        Self {
+            db,
+            assignments: Vec::new(),
+            filters: Vec::new(),
+            _marker: PhantomData,
+        }
+    }
+
+    /// Sets a column to a value or expression.
+    pub fn set<C, V>(mut self, column: Column<C>, value: V) -> Self
+    where
+        C: 'static,
+        V: IntoExpr<C, D>,
+    {
+        self.assignments
+            .push((column.name(), value.into_expr().erase()));
+        self
+    }
+
+    /// Sets a column to a raw SQL expression.
+    pub fn set_raw<C>(mut self, column: Column<C>, sql: impl Into<String>) -> Self {
+        self.assignments.push((column.name(), Expr::raw(sql)));
+        self
+    }
+
+    pub fn filter(mut self, filter: Expr<bool, D>) -> Self {
+        self.filters.push(filter);
+        self
+    }
+
+    pub async fn exec(mut self) -> Result<<D::DB as Database>::QueryResult>
+    where
+        <D::DB as Database>::Arguments: sqlx_core::arguments::IntoArguments<D::DB>,
+        for<'c> &'c mut <D::DB as Database>::Connection: Executor<'c, Database = D::DB>,
+    {
+        let (sql, arguments) = self.render(false)?;
+        query_with::<D::DB, _>(AssertSqlSafe(sql).into_sql_str(), arguments)
+            .execute(self.db.pool())
+            .await
+    }
+
+    pub async fn exec_in(
+        mut self,
+        tx: &mut Transaction<'_, D>,
+    ) -> Result<<D::DB as Database>::QueryResult>
+    where
+        <D::DB as Database>::Arguments: sqlx_core::arguments::IntoArguments<D::DB>,
+        for<'c> &'c mut <D::DB as Database>::Connection: Executor<'c, Database = D::DB>,
+    {
+        let (sql, arguments) = self.render(false)?;
+        query_with::<D::DB, _>(AssertSqlSafe(sql).into_sql_str(), arguments)
+            .execute(tx.connection())
+            .await
+    }
+
+    pub async fn exec_returning(mut self) -> Result<Vec<T>>
+    where
+        T: Send + Unpin + for<'r> FromRow<'r, <D::DB as Database>::Row>,
+        <D::DB as Database>::Arguments: sqlx_core::arguments::IntoArguments<D::DB>,
+        for<'c> &'c mut <D::DB as Database>::Connection: Executor<'c, Database = D::DB>,
+    {
+        let (sql, arguments) = self.render(true)?;
+        query_as_with::<D::DB, T, _>(AssertSqlSafe(sql).into_sql_str(), arguments)
+            .fetch_all(self.db.pool())
+            .await
+    }
+
+    pub async fn exec_returning_in(mut self, tx: &mut Transaction<'_, D>) -> Result<Vec<T>>
+    where
+        T: Send + Unpin + for<'r> FromRow<'r, <D::DB as Database>::Row>,
+        <D::DB as Database>::Arguments: sqlx_core::arguments::IntoArguments<D::DB>,
+        for<'c> &'c mut <D::DB as Database>::Connection: Executor<'c, Database = D::DB>,
+    {
+        let (sql, arguments) = self.render(true)?;
+        query_as_with::<D::DB, T, _>(AssertSqlSafe(sql).into_sql_str(), arguments)
+            .fetch_all(tx.connection())
+            .await
+    }
+
+    fn render(&mut self, returning: bool) -> Result<(String, <D::DB as Database>::Arguments)> {
+        let mut writer = SqlWriter::new(self.db.dialect());
+        D::Update::default().write(
+            UpdatePlan {
+                table: T::DEF,
+                assignments: &mut self.assignments,
+                filters: &mut self.filters,
+                returning,
+            },
+            &mut writer,
+        )?;
+        Ok(writer.finish())
+    }
+}
+
+/// A pending `DELETE`.
+pub struct Delete<D: Dialect + Clone, T: Table> {
+    db: Db<D>,
+    filters: Vec<Expr<bool, D>>,
+    _marker: PhantomData<fn() -> T>,
+}
+
+impl<D: Dialect + Clone, T: Table> Delete<D, T> {
+    pub(crate) fn new(db: Db<D>) -> Self {
+        Self {
+            db,
+            filters: Vec::new(),
+            _marker: PhantomData,
+        }
+    }
+
+    pub fn filter(mut self, filter: Expr<bool, D>) -> Self {
+        self.filters.push(filter);
+        self
+    }
+
+    pub async fn exec(mut self) -> Result<<D::DB as Database>::QueryResult>
+    where
+        <D::DB as Database>::Arguments: sqlx_core::arguments::IntoArguments<D::DB>,
+        for<'c> &'c mut <D::DB as Database>::Connection: Executor<'c, Database = D::DB>,
+    {
+        let (sql, arguments) = self.render(false)?;
+        query_with::<D::DB, _>(AssertSqlSafe(sql).into_sql_str(), arguments)
+            .execute(self.db.pool())
+            .await
+    }
+
+    pub async fn exec_in(
+        mut self,
+        tx: &mut Transaction<'_, D>,
+    ) -> Result<<D::DB as Database>::QueryResult>
+    where
+        <D::DB as Database>::Arguments: sqlx_core::arguments::IntoArguments<D::DB>,
+        for<'c> &'c mut <D::DB as Database>::Connection: Executor<'c, Database = D::DB>,
+    {
+        let (sql, arguments) = self.render(false)?;
+        query_with::<D::DB, _>(AssertSqlSafe(sql).into_sql_str(), arguments)
+            .execute(tx.connection())
+            .await
+    }
+
+    pub async fn exec_returning(mut self) -> Result<Vec<T>>
+    where
+        T: Send + Unpin + for<'r> FromRow<'r, <D::DB as Database>::Row>,
+        <D::DB as Database>::Arguments: sqlx_core::arguments::IntoArguments<D::DB>,
+        for<'c> &'c mut <D::DB as Database>::Connection: Executor<'c, Database = D::DB>,
+    {
+        let (sql, arguments) = self.render(true)?;
+        query_as_with::<D::DB, T, _>(AssertSqlSafe(sql).into_sql_str(), arguments)
+            .fetch_all(self.db.pool())
+            .await
+    }
+
+    pub async fn exec_returning_in(mut self, tx: &mut Transaction<'_, D>) -> Result<Vec<T>>
+    where
+        T: Send + Unpin + for<'r> FromRow<'r, <D::DB as Database>::Row>,
+        <D::DB as Database>::Arguments: sqlx_core::arguments::IntoArguments<D::DB>,
+        for<'c> &'c mut <D::DB as Database>::Connection: Executor<'c, Database = D::DB>,
+    {
+        let (sql, arguments) = self.render(true)?;
+        query_as_with::<D::DB, T, _>(AssertSqlSafe(sql).into_sql_str(), arguments)
+            .fetch_all(tx.connection())
+            .await
+    }
+
+    fn render(&mut self, returning: bool) -> Result<(String, <D::DB as Database>::Arguments)> {
+        let mut writer = SqlWriter::new(self.db.dialect());
+        D::Delete::default().write(
+            DeletePlan {
+                table: T::DEF,
+                filters: &mut self.filters,
+                returning,
+            },
+            &mut writer,
+        )?;
+        Ok(writer.finish())
+    }
+}
+
+/// A pending `INSERT ... ON CONFLICT ... DO UPDATE`.
+pub struct Upsert<D: Dialect + Clone, T: Table> {
+    db: Db<D>,
+    columns: Vec<&'static str>,
+    values: Vec<Expr<(), D>>,
+    conflict_columns: Vec<&'static str>,
+    assignments: Vec<(&'static str, Expr<(), D>)>,
+    _marker: PhantomData<fn() -> T>,
+}
+
+impl<D: Dialect + Clone, T: Table> Upsert<D, T> {
+    pub(crate) fn new(db: Db<D>) -> Self {
+        Self {
+            db,
+            columns: Vec::new(),
+            values: Vec::new(),
+            conflict_columns: Vec::new(),
+            assignments: Vec::new(),
+            _marker: PhantomData,
+        }
+    }
+
+    pub fn value<C, V>(mut self, column: Column<C>, value: V) -> Self
+    where
+        C: 'static,
+        V: IntoExpr<C, D>,
+    {
+        self.columns.push(column.name());
+        self.values.push(value.into_expr().erase());
+        self
+    }
+
+    /// The conflict target columns, for example the primary key.
+    pub fn conflict_on<C>(mut self, column: Column<C>) -> Self {
+        self.conflict_columns.push(column.name());
+        self
+    }
+
+    /// A column to update when the row already exists.
+    pub fn update<C, V>(mut self, column: Column<C>, value: V) -> Self
+    where
+        C: 'static,
+        V: IntoExpr<C, D>,
+    {
+        self.assignments
+            .push((column.name(), value.into_expr().erase()));
+        self
+    }
+
+    pub async fn exec(mut self) -> Result<<D::DB as Database>::QueryResult>
+    where
+        <D::DB as Database>::Arguments: sqlx_core::arguments::IntoArguments<D::DB>,
+        for<'c> &'c mut <D::DB as Database>::Connection: Executor<'c, Database = D::DB>,
+    {
+        let (sql, arguments) = self.render(false)?;
+        query_with::<D::DB, _>(AssertSqlSafe(sql).into_sql_str(), arguments)
+            .execute(self.db.pool())
+            .await
+    }
+
+    pub async fn exec_in(
+        mut self,
+        tx: &mut Transaction<'_, D>,
+    ) -> Result<<D::DB as Database>::QueryResult>
+    where
+        <D::DB as Database>::Arguments: sqlx_core::arguments::IntoArguments<D::DB>,
+        for<'c> &'c mut <D::DB as Database>::Connection: Executor<'c, Database = D::DB>,
+    {
+        let (sql, arguments) = self.render(false)?;
+        query_with::<D::DB, _>(AssertSqlSafe(sql).into_sql_str(), arguments)
+            .execute(tx.connection())
+            .await
+    }
+
+    pub async fn exec_returning(mut self) -> Result<T>
+    where
+        T: Send + Unpin + for<'r> FromRow<'r, <D::DB as Database>::Row>,
+        <D::DB as Database>::Arguments: sqlx_core::arguments::IntoArguments<D::DB>,
+        for<'c> &'c mut <D::DB as Database>::Connection: Executor<'c, Database = D::DB>,
+    {
+        let (sql, arguments) = self.render(true)?;
+        query_as_with::<D::DB, T, _>(AssertSqlSafe(sql).into_sql_str(), arguments)
+            .fetch_one(self.db.pool())
+            .await
+    }
+
+    fn render(&mut self, returning: bool) -> Result<(String, <D::DB as Database>::Arguments)> {
+        let mut writer = SqlWriter::new(self.db.dialect());
+        D::Upsert::default().write(
+            UpsertPlan {
+                table: T::DEF,
+                columns: &self.columns,
+                values: &mut self.values,
+                conflict_columns: &self.conflict_columns,
+                assignments: &mut self.assignments,
+                returning,
+            },
+            &mut writer,
+        )?;
+        Ok(writer.finish())
+    }
+}

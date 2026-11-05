@@ -1,0 +1,80 @@
+{
+  "format": 1,
+  "db_name": "PostgreSQL",
+  "table": "app_todos",
+  "schema": null,
+  "describe": {
+    "columns": [
+      {
+        "name": "id",
+        "ordinal": 0,
+        "origin": {
+          "Table": {
+            "name": "id",
+            "table": "app_todos"
+          }
+        },
+        "type_info": "Int8"
+      },
+      {
+        "name": "user_id",
+        "ordinal": 1,
+        "origin": {
+          "Table": {
+            "name": "user_id",
+            "table": "app_todos"
+          }
+        },
+        "type_info": "Int8"
+      },
+      {
+        "name": "title",
+        "ordinal": 2,
+        "origin": {
+          "Table": {
+            "name": "title",
+            "table": "app_todos"
+          }
+        },
+        "type_info": "Text"
+      }
+    ],
+    "nullable": [
+      false,
+      false,
+      false
+    ],
+    "parameters": {
+      "Left": []
+    }
+  },
+  "constraints": {
+    "primary_key": [
+      "id"
+    ],
+    "defaults": {
+      "id": "nextval('app_todos_id_seq'::regclass)"
+    },
+    "identity": [],
+    "generated": [],
+    "foreign_keys": [
+      {
+        "name": "app_todos_user_id_fkey",
+        "columns": [
+          "user_id"
+        ],
+        "referenced_table": {
+          "schema": "public",
+          "name": "app_users"
+        },
+        "referenced_columns": [
+          "id"
+        ],
+        "columns_nullable": [
+          false
+        ]
+      }
+    ],
+    "referenced_by": []
+  }
+}

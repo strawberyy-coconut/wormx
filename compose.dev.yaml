@@ -1,0 +1,48 @@
+services:
+  dev:
+    build:
+      context: .
+      dockerfile: Containerfile.dev
+    env_file:
+      - .dev.env
+
+
+  mssql:
+    image: mcr.microsoft.com/mssql/server:2022-latest
+    environment:
+      ACCEPT_EULA: "Y"
+      MSSQL_SA_PASSWORD: "Password1!"
+      MSSQL_PID: Developer
+    ports:
+      - target: 1433
+        published: "1435"
+        protocol: tcp
+
+  postgres:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: "Password1!"
+      POSTGRES_DB: testdb
+    ports:
+      - target: 5432
+        published: "5432"
+        protocol: tcp
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+
+  mysql:
+    image: mysql:8.4
+    environment:
+      MYSQL_ROOT_PASSWORD: "Password1!"
+      MYSQL_DATABASE: wormx_example
+    ports:
+      - target: 3306
+        published: "3306"
+        protocol: tcp
+    volumes:
+      - mysql-data:/var/lib/mysql
+
+volumes:
+  postgres-data:
+  mysql-data:

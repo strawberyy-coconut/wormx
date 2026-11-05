@@ -1,0 +1,2 @@
+[macros.type-overrides]
+"wormx_mood" = "crate::Mood"

@@ -1,0 +1,14 @@
+FROM docker.io/rust:latest
+
+RUN rustup component add rustfmt clippy
+
+
+RUN apt-get update \
+    && apt-get install -y libgssapi-krb5-2 \
+    && rm -rf /var/lib/apt/lists/*
+    
+RUN cargo install sqlx-mssql-rs-cli
+RUN cargo install sqlx-cli
+
+RUN printf 'export PATH="${CARGO_HOME:-/usr/local/cargo}/bin:$PATH"\n' \
+    > /etc/profile.d/rust.sh

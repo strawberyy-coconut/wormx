@@ -1,0 +1,16 @@
+[package]
+name = "wormx-sqlite-fixture"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish = false
+
+[dependencies]
+wormx = { path = "../..", features = ["macros", "sqlite"] }
+sqlx = { workspace = true, features = ["runtime-tokio", "sqlite"] }
+
+[dev-dependencies]
+tokio = { workspace = true }
+
+[build-dependencies]
+rusqlite = { workspace = true }

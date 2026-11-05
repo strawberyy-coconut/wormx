@@ -1,0 +1,71 @@
+[workspace]
+members = [".", "wormx-core", "wormx-macros-core", "wormx-macros", "wormx-drivers", "wormx-drivers/wormx-drivers-postgres", "wormx-drivers/wormx-drivers-sqlite", "wormx-drivers/wormx-drivers-mysql", "wormx-drivers/wormx-drivers-mssql", "tests/sqlite-fixture", "tests/postgres-fixture", "tests/mssql-fixture", "examples/sqlite", "examples/postgres", "examples/mssql"]
+exclude = ["examples/mysql"]
+resolver = "2"
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.96"
+license = "MIT OR Apache-2.0"
+
+[workspace.dependencies]
+sqlx = { version = "0.9.0", default-features = false }
+sqlx-core = { version = "0.9.0", default-features = false }
+sqlx-postgres = { version = "0.9.0", default-features = false }
+sqlx-sqlite = { version = "0.9.0", default-features = false }
+sqlx-mysql = { version = "0.9.0", default-features = false }
+sqlx-mssql-rs = { version = "0.1.0", default-features = false }
+
+syn = { version = "2", features = ["full"] }
+quote = "1"
+proc-macro2 = "1"
+
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+toml = "0.8"
+sha2 = "0.10"
+hex = "0.4"
+thiserror = "2"
+dotenvy = "0.15"
+heck = "0.5"
+
+tokio = { version = "1", features = ["rt", "rt-multi-thread", "macros"] }
+
+rusqlite = { version = "0.32", features = ["bundled"] }
+postgres = "0.19"
+
+[package]
+name = "wormx"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[dependencies]
+wormx-core = { path = "wormx-core", version = "0.1.0" }
+wormx-drivers = { path = "wormx-drivers", version = "0.1.0", optional = true, default-features = false }
+wormx-macros = { path = "wormx-macros", version = "0.1.0", optional = true, default-features = false }
+sqlx = { workspace = true }
+
+[features]
+default = ["macros"]
+macros = ["dep:wormx-macros"]
+
+postgres = ["sqlx/postgres", "dep:wormx-drivers", "wormx-drivers/postgres", "wormx-macros?/postgres"]
+mysql = ["sqlx/mysql", "dep:wormx-drivers", "wormx-drivers/mysql", "wormx-macros?/mysql"]
+mssql = ["dep:wormx-drivers", "wormx-drivers/mssql", "wormx-macros?/mssql"]
+sqlite = ["sqlx/sqlite", "dep:wormx-drivers", "wormx-drivers/sqlite", "wormx-macros?/sqlite"]
+
+chrono = ["sqlx/chrono", "wormx-macros?/chrono", "wormx-drivers?/chrono"]
+time = ["sqlx/time", "wormx-macros?/time", "wormx-drivers?/time"]
+uuid = ["sqlx/uuid", "wormx-macros?/uuid", "wormx-drivers?/uuid"]
+json = ["sqlx/json", "wormx-macros?/json", "wormx-drivers?/json"]
+bigdecimal = ["sqlx/bigdecimal", "wormx-macros?/bigdecimal", "wormx-drivers?/bigdecimal"]
+rust_decimal = ["sqlx/rust_decimal", "wormx-macros?/rust_decimal", "wormx-drivers?/rust_decimal"]
+
+runtime-tokio = ["sqlx/runtime-tokio"]
+runtime-async-std = ["sqlx/runtime-async-std"]
+
+[dev-dependencies]
+tokio = { workspace = true }
