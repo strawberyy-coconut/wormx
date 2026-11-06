@@ -53,12 +53,6 @@ impl<D: Dialect + Clone, T: Table> InsertMany<D, T> {
         self
     }
 
-    /// Adds an already-built row.
-    pub fn push_row(mut self, row: RowBuilder<D>) -> Self {
-        self.rows.push(row);
-        self
-    }
-
     /// Executes the statement.
     pub async fn exec(mut self) -> Result<<D::DB as Database>::QueryResult>
     where

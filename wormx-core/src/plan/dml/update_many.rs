@@ -64,15 +64,6 @@ impl<D: Dialect, K> UpdateRow<D, K> {
         self.values.push((name, column, value));
         self
     }
-
-    /// Appends a literal SQL expression as a value.
-    pub fn value_raw<C>(mut self, column: Column<C>, sql: impl Into<String>) -> Self {
-        let name = column.name();
-        let mut column = column.column_ref();
-        column.alias = None;
-        self.values.push((name, column, Expr::raw(sql)));
-        self
-    }
 }
 
 impl<D: Dialect, K> Default for UpdateRow<D, K> {
@@ -143,12 +134,6 @@ impl<D: Dialect + Clone, T: Table, K> UpdateMany<D, T, K> {
         for item in items {
             self = self.row(|row| build(item, row));
         }
-        self
-    }
-
-    /// Adds an already-built row.
-    pub fn push_row(mut self, row: UpdateRow<D, K>) -> Self {
-        self.rows.push(row);
         self
     }
 
@@ -285,7 +270,7 @@ impl<D: Dialect + Clone, T: Table, K> UpdateMany<D, T, K> {
 
         if columns.is_empty() {
             return Err(Error::InvalidArgument(
-                "UPDATE requires at least one assignment; call .value(...) or .value_raw(...)"
+                "UPDATE requires at least one assignment; call .value(...) or .value_expr(...)"
                     .to_owned(),
             ));
         }

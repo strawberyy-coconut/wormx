@@ -61,12 +61,6 @@ impl<D: Dialect + Clone, T: Table> UpsertMany<D, T> {
         self
     }
 
-    /// Adds an already-built row.
-    pub fn push_row(mut self, row: RowBuilder<D>) -> Self {
-        self.rows.push(row);
-        self
-    }
-
     /// Adds a conflict-target column.
     pub fn conflict_on<C>(mut self, column: Column<C>) -> Self {
         self.conflict_columns.push(column.name());

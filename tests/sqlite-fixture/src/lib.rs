@@ -651,7 +651,7 @@ mod tests {
         assert_eq!(ids.len(), 2);
 
         let filtered = db
-            .query(Users::filter(Users::fields().active().eq(true)))
+            .query(Users::all().filter(Users::fields().active().eq(true)))
             .exec()
             .await
             .expect("run generated filter query");
@@ -1130,9 +1130,9 @@ mod tests {
             .expect("load profile link")
             .expect("profile link exists");
 
-        let profile = link
-            .profiles()
-            .first(&db)
+        let profile = db
+            .query(link.profiles())
+            .first()
             .await
             .expect("load belongs-to by unique column")
             .expect("profile exists");
@@ -1486,7 +1486,8 @@ mod tests {
         let db = wormx::Db::new(pool, wormx::SqliteDialect);
 
         let ids = [80_i64, 81, 82];
-        db.delete_many::<Users>(Users::fields().id().in_list(ids))
+        db.delete::<Users>()
+            .filter(Users::fields().id().in_list(ids))
             .exec()
             .await
             .expect("clean prior rows");
@@ -1580,7 +1581,8 @@ mod tests {
         assert_eq!(bob.name, "Batch Bob 2");
         assert!(!bob.active, "an omitted column keeps its existing value");
 
-        db.delete_many::<Users>(Users::fields().id().in_list(ids))
+        db.delete::<Users>()
+            .filter(Users::fields().id().in_list(ids))
             .exec()
             .await
             .expect("batch delete");

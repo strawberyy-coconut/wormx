@@ -205,7 +205,8 @@ mod tests {
             .expect("connect to Postgres fixture database");
         let db = wormx::Db::new(pool, wormx::PostgresDialect);
 
-        db.delete_many::<WormxUsers>(WormxUsers::fields().name().like("Batch%"))
+        db.delete::<WormxUsers>()
+            .filter(WormxUsers::fields().name().like("Batch%"))
             .exec()
             .await
             .expect("clean batch rows");
@@ -275,7 +276,8 @@ mod tests {
         assert_eq!(users[0].name, "Batch Alice 3");
         assert_eq!(users[1].name, "Batch Bob 3");
 
-        db.delete_many::<WormxUsers>(WormxUsers::fields().id().in_list(ids.clone()))
+        db.delete::<WormxUsers>()
+            .filter(WormxUsers::fields().id().in_list(ids.clone()))
             .exec()
             .await
             .expect("batch delete");

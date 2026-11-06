@@ -35,6 +35,15 @@ impl<T> Query<T> {
             _marker: PhantomData,
         }
     }
+
+    /// Adds a filter to the table query.
+    pub fn filter<D>(self, filter: Expr<bool, D>) -> Filtered<D, T>
+    where
+        D: Dialect + Clone,
+        T: Table + 'static,
+    {
+        Filtered::new(filter)
+    }
 }
 
 impl<T> Default for Query<T> {
@@ -66,7 +75,7 @@ pub struct Filtered<D: Dialect + Clone, T: Table + 'static> {
 
 impl<D: Dialect + Clone, T: Table + 'static> Filtered<D, T> {
     /// Creates a filtered table query.
-    pub fn new(filter: Expr<bool, D>) -> Self {
+    pub(crate) fn new(filter: Expr<bool, D>) -> Self {
         Self {
             filter,
             _marker: PhantomData,
@@ -205,23 +214,162 @@ impl_projection_tuple!(A: 0, B: 1, C: 2, E: 3, F: 4, G: 5, H: 6, I: 7, J: 8, K: 
 impl_projection_tuple!(A: 0, B: 1, C: 2, E: 3, F: 4, G: 5, H: 6, I: 7, J: 8, K: 9, L: 10, M: 11, N: 12, O: 13, P: 14);
 impl_projection_tuple!(A: 0, B: 1, C: 2, E: 3, F: 4, G: 5, H: 6, I: 7, J: 8, K: 9, L: 10, M: 11, N: 12, O: 13, P: 14, Q: 15);
 
-/// A projected table query bound to a dialect and database handle.
-pub struct ProjectedSelect<D: Dialect + Clone, T: Table + 'static, P: Projection<D>> {
+/// Shared builder state for row and projected selects.
+struct SelectState<D: Dialect + Clone, T: 'static> {
     db: Db<D>,
     source: TableSource,
     distinct: bool,
     filters: Vec<Expr<bool, D>>,
     joins: Vec<Join<D>>,
     orders: Vec<Order<D>>,
+    ctes: Vec<Cte<D>>,
     limit: Option<u64>,
     offset: Option<u64>,
     tail: Option<&'static str>,
+    _marker: PhantomData<fn() -> T>,
+}
+
+impl<D: Dialect + Clone, T: Table + 'static> SelectState<D, T> {
+    fn new(db: Db<D>) -> Self {
+        Self {
+            db,
+            source: TableSource::new(T::DEF, None),
+            distinct: false,
+            filters: Vec::new(),
+            joins: Vec::new(),
+            orders: Vec::new(),
+            ctes: Vec::new(),
+            limit: None,
+            offset: None,
+            tail: None,
+            _marker: PhantomData,
+        }
+    }
+
+    fn filter(mut self, filter: Expr<bool, D>) -> Self {
+        self.filters.push(filter);
+        self
+    }
+
+    fn distinct(mut self) -> Self {
+        self.distinct = true;
+        self
+    }
+
+    fn with(mut self, cte: Cte<D>) -> Self {
+        self.ctes.push(cte);
+        self
+    }
+
+    fn join(mut self, join: Join<D>) -> Self {
+        self.joins.push(join);
+        self
+    }
+
+    fn order_by(mut self, order: Order<D>) -> Self {
+        self.orders.push(order);
+        self
+    }
+
+    fn limit(mut self, limit: u64) -> Self {
+        self.limit = Some(limit);
+        self
+    }
+
+    fn offset(mut self, offset: u64) -> Self {
+        self.offset = Some(offset);
+        self
+    }
+
+    fn with_source_suffix(mut self, suffix: &'static str) -> Self {
+        self.source.suffix = Some(suffix);
+        self
+    }
+
+    fn with_tail(mut self, tail: &'static str) -> Self {
+        self.tail = Some(tail);
+        self
+    }
+
+    fn write<P: Projection<D>>(
+        &mut self,
+        projection: &mut P,
+        groups: &mut [Expr<(), D>],
+        having: &mut [Expr<bool, D>],
+        writer: &mut Writer<D>,
+    ) -> Result<()> {
+        D::Select::default().write(
+            SelectPlan {
+                table: self.source,
+                distinct: self.distinct,
+                projection,
+                ctes: &mut self.ctes,
+                filters: &mut self.filters,
+                joins: &mut self.joins,
+                groups,
+                having,
+                orders: &mut self.orders,
+                limit: self.limit,
+                offset: self.offset,
+                tail: self.tail,
+            },
+            writer,
+        )
+    }
+
+    fn write_count<P>(
+        &mut self,
+        projection: &mut P,
+        groups: &mut [Expr<(), D>],
+        having: &mut [Expr<bool, D>],
+        writer: &mut Writer<D>,
+        distinct: bool,
+    ) -> Result<()>
+    where
+        P: Projection<D> + CountProjection<D>,
+    {
+        D::Select::default().write_count(
+            SelectPlan {
+                table: self.source,
+                distinct: self.distinct,
+                projection,
+                ctes: &mut self.ctes,
+                filters: &mut self.filters,
+                joins: &mut self.joins,
+                groups,
+                having,
+                orders: &mut self.orders,
+                limit: self.limit,
+                offset: self.offset,
+                tail: self.tail,
+            },
+            writer,
+            distinct,
+        )
+    }
+
+    fn write_count_star(&mut self, writer: &mut Writer<D>) -> Result<()> {
+        D::Select::default().write_count_star(
+            CountPlan {
+                table: self.source,
+                distinct: self.distinct,
+                filters: &mut self.filters,
+                joins: &mut self.joins,
+                ctes: &mut self.ctes,
+                tail: self.tail,
+            },
+            writer,
+        )
+    }
+}
+
+/// A projected table query bound to a dialect and database handle.
+pub struct ProjectedSelect<D: Dialect + Clone, T: Table + 'static, P: Projection<D>> {
+    state: SelectState<D, T>,
     projection: P,
     groups: Vec<Expr<(), D>>,
     having: Vec<Expr<bool, D>>,
-    ctes: Vec<Cte<D>>,
     dropped_includes: bool,
-    _source: PhantomData<fn() -> T>,
 }
 
 /// Single-column shorthand.
@@ -265,25 +413,25 @@ where
 {
     /// Adds a filter predicate.
     pub fn filter(mut self, filter: Expr<bool, D>) -> Self {
-        self.filters.push(filter);
+        self.state = self.state.filter(filter);
         self
     }
 
     /// Selects distinct rows.
     pub fn distinct(mut self) -> Self {
-        self.distinct = true;
+        self.state = self.state.distinct();
         self
     }
 
     /// Adds a common table expression before the query.
     pub fn with(mut self, cte: Cte<D>) -> Self {
-        self.ctes.push(cte);
+        self.state = self.state.with(cte);
         self
     }
 
     /// Adds a join.
     pub fn join(mut self, join: Join<D>) -> Self {
-        self.joins.push(join);
+        self.state = self.state.join(join);
         self
     }
 
@@ -304,31 +452,31 @@ where
 
     /// Adds an order term.
     pub fn order_by(mut self, order: Order<D>) -> Self {
-        self.orders.push(order);
+        self.state = self.state.order_by(order);
         self
     }
 
     /// Sets the maximum number of rows.
     pub fn limit(mut self, limit: u64) -> Self {
-        self.limit = Some(limit);
+        self.state = self.state.limit(limit);
         self
     }
 
     /// Skips the given number of rows.
     pub fn offset(mut self, offset: u64) -> Self {
-        self.offset = Some(offset);
+        self.state = self.state.offset(offset);
         self
     }
 
     /// Attaches an opaque, dialect-defined suffix to the base table.
     pub fn with_source_suffix(mut self, suffix: &'static str) -> Self {
-        self.source.suffix = Some(suffix);
+        self.state = self.state.with_source_suffix(suffix);
         self
     }
 
     /// Attaches an opaque, dialect-defined tail to the statement.
     pub fn with_tail(mut self, tail: &'static str) -> Self {
-        self.tail = Some(tail);
+        self.state = self.state.with_tail(tail);
         self
     }
 
@@ -349,29 +497,18 @@ where
         <D::DB as Database>::Arguments: sqlx_core::arguments::IntoArguments<D::DB>,
         for<'c> &'c mut <D::DB as Database>::Connection: Executor<'c, Database = D::DB>,
     {
-        self.limit = Some(1);
+        self.state.limit = Some(1);
         let mut rows = self.exec().await?;
         Ok(rows.pop())
     }
 
     /// Renders this query with the dialect's renderer without executing it.
     pub fn render(&mut self) -> Result<(String, <D::DB as Database>::Arguments)> {
-        let mut writer = self.db.writer();
-        D::Select::default().write(
-            SelectPlan {
-                table: self.source,
-                distinct: self.distinct,
-                projection: &mut self.projection,
-                ctes: &mut self.ctes,
-                filters: &mut self.filters,
-                joins: &mut self.joins,
-                groups: &mut self.groups,
-                having: &mut self.having,
-                orders: &mut self.orders,
-                limit: self.limit,
-                offset: self.offset,
-                tail: self.tail,
-            },
+        let mut writer = self.state.db.writer();
+        self.state.write(
+            &mut self.projection,
+            &mut self.groups,
+            &mut self.having,
             &mut writer,
         )?;
         Ok(writer.finish())
@@ -388,7 +525,7 @@ where
         let (sql, arguments) = self.render()?;
         let rows: Vec<P::Row> =
             query_as_with::<D::DB, P::Row, _>(AssertSqlSafe(sql).into_sql_str(), arguments)
-                .fetch_all(self.db.pool())
+                .fetch_all(self.state.db.pool())
                 .await?;
 
         Ok(rows.into_iter().map(P::map).collect())
@@ -451,22 +588,11 @@ where
         for<'c> &'c mut <D::DB as Database>::Connection: Executor<'c, Database = D::DB>,
     {
         self.ensure_no_dropped_includes()?;
-        let mut writer = self.db.writer();
-        D::Select::default().write_count(
-            SelectPlan {
-                table: self.source,
-                distinct: self.distinct,
-                projection: &mut self.projection,
-                ctes: &mut self.ctes,
-                filters: &mut self.filters,
-                joins: &mut self.joins,
-                groups: &mut self.groups,
-                having: &mut self.having,
-                orders: &mut self.orders,
-                limit: self.limit,
-                offset: self.offset,
-                tail: self.tail,
-            },
+        let mut writer = self.state.db.writer();
+        self.state.write_count(
+            &mut self.projection,
+            &mut self.groups,
+            &mut self.having,
             &mut writer,
             distinct,
         )?;
@@ -474,7 +600,7 @@ where
         let (sql, arguments) = writer.finish();
         let (count,): (i64,) =
             query_as_with::<D::DB, (i64,), _>(AssertSqlSafe(sql).into_sql_str(), arguments)
-                .fetch_one(self.db.pool())
+                .fetch_one(self.state.db.pool())
                 .await?;
         Ok(count as u64)
     }
@@ -487,21 +613,10 @@ where
     P: Projection<D>,
 {
     fn render(&mut self, writer: &mut Writer<D>) -> Result<()> {
-        D::Select::default().write(
-            SelectPlan {
-                table: self.source,
-                distinct: self.distinct,
-                projection: &mut self.projection,
-                ctes: &mut self.ctes,
-                filters: &mut self.filters,
-                joins: &mut self.joins,
-                groups: &mut self.groups,
-                having: &mut self.having,
-                orders: &mut self.orders,
-                limit: self.limit,
-                offset: self.offset,
-                tail: self.tail,
-            },
+        self.state.write(
+            &mut self.projection,
+            &mut self.groups,
+            &mut self.having,
             writer,
         )
     }
@@ -806,87 +921,69 @@ impl<T> Column<T> {
 
 /// A typed query bound to a dialect and database handle.
 pub struct Select<D: Dialect + Clone, T: 'static> {
-    db: Db<D>,
-    source: TableSource,
-    distinct: bool,
-    filters: Vec<Expr<bool, D>>,
-    joins: Vec<Join<D>>,
-    orders: Vec<Order<D>>,
+    state: SelectState<D, T>,
     includes: Vec<Box<dyn Include<D, T>>>,
-    ctes: Vec<Cte<D>>,
-    limit: Option<u64>,
-    offset: Option<u64>,
-    tail: Option<&'static str>,
 }
 
 impl<D: Dialect + Clone, T: Table + 'static> Select<D, T> {
     fn new(db: Db<D>) -> Self {
         Self {
-            db,
-            source: TableSource::new(T::DEF, None),
-            distinct: false,
-            filters: Vec::new(),
-            joins: Vec::new(),
-            orders: Vec::new(),
+            state: SelectState::new(db),
             includes: Vec::new(),
-            ctes: Vec::new(),
-            limit: None,
-            offset: None,
-            tail: None,
         }
     }
 
     /// Adds a filter predicate.
     pub fn filter(mut self, filter: Expr<bool, D>) -> Self {
-        self.filters.push(filter);
+        self.state = self.state.filter(filter);
         self
     }
 
     /// Selects distinct rows.
     pub fn distinct(mut self) -> Self {
-        self.distinct = true;
+        self.state = self.state.distinct();
         self
     }
 
     /// Adds a common table expression before the query.
     pub fn with(mut self, cte: Cte<D>) -> Self {
-        self.ctes.push(cte);
+        self.state = self.state.with(cte);
         self
     }
 
     /// Adds a join.
     pub fn join(mut self, join: Join<D>) -> Self {
-        self.joins.push(join);
+        self.state = self.state.join(join);
         self
     }
 
     /// Adds an order term.
     pub fn order_by(mut self, order: Order<D>) -> Self {
-        self.orders.push(order);
+        self.state = self.state.order_by(order);
         self
     }
 
     /// Sets the maximum number of rows.
     pub fn limit(mut self, limit: u64) -> Self {
-        self.limit = Some(limit);
+        self.state = self.state.limit(limit);
         self
     }
 
     /// Skips the given number of rows.
     pub fn offset(mut self, offset: u64) -> Self {
-        self.offset = Some(offset);
+        self.state = self.state.offset(offset);
         self
     }
 
     /// Attaches an opaque, dialect-defined suffix to the base table.
     pub fn with_source_suffix(mut self, suffix: &'static str) -> Self {
-        self.source.suffix = Some(suffix);
+        self.state = self.state.with_source_suffix(suffix);
         self
     }
 
     /// Attaches an opaque, dialect-defined tail to the statement.
     pub fn with_tail(mut self, tail: &'static str) -> Self {
-        self.tail = Some(tail);
+        self.state = self.state.with_tail(tail);
         self
     }
 
@@ -895,23 +992,14 @@ impl<D: Dialect + Clone, T: Table + 'static> Select<D, T> {
     where
         P: Projection<D>,
     {
-        let dropped_includes = !self.includes.is_empty();
+        let Self { state, includes } = self;
+        let dropped_includes = !includes.is_empty();
         ProjectedSelect {
-            db: self.db,
-            source: self.source,
-            distinct: self.distinct,
-            filters: self.filters,
-            joins: self.joins,
-            orders: self.orders,
-            limit: self.limit,
-            offset: self.offset,
-            tail: self.tail,
+            state,
             projection,
             groups: Vec::new(),
             having: Vec::new(),
-            ctes: self.ctes,
             dropped_includes,
-            _source: PhantomData,
         }
     }
 
@@ -926,25 +1014,11 @@ impl<D: Dialect + Clone, T: Table + 'static> Select<D, T> {
 
     /// Renders this query with the dialect's renderer without executing it.
     pub fn render(&mut self) -> Result<(String, <D::DB as Database>::Arguments)> {
-        let mut writer = self.db.writer();
-        let mut projection = StarProjection;
-        D::Select::default().write(
-            SelectPlan {
-                table: self.source,
-                distinct: self.distinct,
-                projection: &mut projection,
-                ctes: &mut self.ctes,
-                filters: &mut self.filters,
-                joins: &mut self.joins,
-                groups: &mut [],
-                having: &mut [],
-                orders: &mut self.orders,
-                limit: self.limit,
-                offset: self.offset,
-                tail: self.tail,
-            },
-            &mut writer,
-        )?;
+        let mut writer = self.state.db.writer();
+        let mut groups = [];
+        let mut having = [];
+        self.state
+            .write(&mut StarProjection, &mut groups, &mut having, &mut writer)?;
         Ok(writer.finish())
     }
 
@@ -958,11 +1032,11 @@ impl<D: Dialect + Clone, T: Table + 'static> Select<D, T> {
         let (sql, arguments) = self.render()?;
         let mut rows: Vec<T> =
             query_as_with::<D::DB, T, _>(AssertSqlSafe(sql).into_sql_str(), arguments)
-                .fetch_all(self.db.pool())
+                .fetch_all(self.state.db.pool())
                 .await?;
 
         for include in &self.includes {
-            include.apply(&self.db, &mut rows).await?;
+            include.apply(&self.state.db, &mut rows).await?;
         }
 
         Ok(rows)
@@ -982,7 +1056,7 @@ impl<D: Dialect + Clone, T: Table + 'static> Select<D, T> {
                 .await?;
 
         for include in &self.includes {
-            include.apply_in(&self.db, tx, &mut rows).await?;
+            include.apply_in(&self.state.db, tx, &mut rows).await?;
         }
 
         Ok(rows)
@@ -997,23 +1071,13 @@ impl<D: Dialect + Clone, T: Table + 'static> Select<D, T> {
         <D::DB as Database>::Arguments: sqlx_core::arguments::IntoArguments<D::DB>,
         for<'c> &'c mut <D::DB as Database>::Connection: Executor<'c, Database = D::DB>,
     {
-        let mut writer = self.db.writer();
-        D::Select::default().write_count_star(
-            CountPlan {
-                table: self.source,
-                distinct: self.distinct,
-                filters: &mut self.filters,
-                joins: &mut self.joins,
-                ctes: &mut self.ctes,
-                tail: self.tail,
-            },
-            &mut writer,
-        )?;
+        let mut writer = self.state.db.writer();
+        self.state.write_count_star(&mut writer)?;
 
         let (sql, arguments) = writer.finish();
         let (count,): (i64,) =
             query_as_with::<D::DB, (i64,), _>(AssertSqlSafe(sql).into_sql_str(), arguments)
-                .fetch_one(self.db.pool())
+                .fetch_one(self.state.db.pool())
                 .await?;
 
         Ok(count as u64)
@@ -1026,7 +1090,7 @@ impl<D: Dialect + Clone, T: Table + 'static> Select<D, T> {
         <D::DB as Database>::Arguments: sqlx_core::arguments::IntoArguments<D::DB>,
         for<'c> &'c mut <D::DB as Database>::Connection: Executor<'c, Database = D::DB>,
     {
-        self.limit = Some(1);
+        self.state.limit = Some(1);
         let mut rows = self.exec().await?;
         Ok(rows.pop())
     }

@@ -141,17 +141,17 @@ Implemented:
   composite foreign keys.
 - Lazy relation queries and eager loading with `.include(...)`.
 - Nested eager loading: `.include(Users::fields().todos().include(Todos::fields().user()))`.
-- Relation access through `user.todos().exec(&db)` and `user.todos().loaded()`.
+- Relation access through `db.query(user.todos())` and `user.todos().loaded()`.
 - Expression composition: `.and(...)`, `.or(...)`, `.not()`, `COALESCE`.
 - Custom SQL functions with `sql_function!`.
 - Custom infix/prefix/postfix operators.
-- Generated `Users::filter(...)` for dialect-neutral filters.
+- Filtered table queries with `Users::all().filter(...)`.
 - Single-column projections with `.select(...)` and `IN` subqueries with `.in_query(...)`.
 - `COUNT` and raw SQL escape hatches with `db.sql(...).bind(...)`.
 - Insert, update, delete, and upsert builders, plus transactions and
   `RETURNING` where the dialect supports it.
 - Batch writes: `insert_many`, `upsert_many`, per-row `update_many`, and
-  `delete_many`; each batch is one statement.
+  filtered deletes; each batch is one statement.
 - Grouping and `HAVING`.
 - CTEs, window functions, and arbitrary joins over tables, CTEs, or derived tables.
 - Runtime traits for dialect capabilities and typed expressions, including the
@@ -255,8 +255,9 @@ db.delete::<Users>()
     .await?;
 ```
 
-Insert and update values accept either Rust values or expressions; use
-`.value_raw(...)` / `.set_raw(...)` for SQL expressions such as `NOW()`.
+Single-row insert and update values accept either Rust values or expressions;
+use `.value_raw(...)` / `.set_raw(...)` for SQL expressions such as `NOW()`.
+Batch rows use `.value_expr(..., Expr::raw(...))` instead.
 `exec_returning()` decodes returned rows and is only available on dialects with
 returned-row support: `RETURNING *` on PostgreSQL and SQLite, and
 `OUTPUT INSERTED.*` / `OUTPUT DELETED.*` on SQL Server. Plain `exec()` returns
@@ -338,7 +339,8 @@ db.update_many::<Users>()
 Bulk deletes use the usual filter DSL:
 
 ```rust
-db.delete_many::<Users>(Users::fields().id().in_list([1_i64, 2_i64]))
+db.delete::<Users>()
+    .filter(Users::fields().id().in_list([1_i64, 2_i64]))
     .exec()
     .await?;
 ```
@@ -499,20 +501,20 @@ let owner = db.query(todos[0].user()).first().await?;
 ```
 
 Relation fields are private and stored as `Deferred` values. The relation
-accessor is both the query accessor and the loaded-value accessor. Relation
+accessor is both the query source and the loaded-value accessor. Relation
 loading resolves target fields by their database column name, so renaming a
 referenced column with `as` does not break include/eager loading:
 
 ```rust
-let todos = user.todos().exec(&db).await?;   // lazy query
-let loaded = user.todos().loaded();          // Option<&Vec<Todos>>
+let todos = db.query(user.todos()).exec().await?;   // lazy query
+let loaded = user.todos().loaded();                 // Option<&Vec<Todos>>
 ```
 
 For `belongs_to`:
 
 ```rust
-let owner = todo.user().first(&db).await?;   // Option<Users>
-let loaded = todo.user().loaded();           // Option<&Users>
+let owner = db.query(todo.user()).first().await?;   // Option<Users>
+let loaded = todo.user().loaded();                  // Option<&Users>
 ```
 
 Eager loading supports nested includes:
@@ -687,7 +689,7 @@ spelling.
 Filters can also be built without a database handle:
 
 ```rust
-let query = Users::filter(Users::fields().active().eq(true));
+let query = Users::all().filter(Users::fields().active().eq(true));
 let users = db.query(query).exec().await?;
 ```
 

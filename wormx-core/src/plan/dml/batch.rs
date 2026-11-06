@@ -37,12 +37,6 @@ impl<D: Dialect> RowBuilder<D> {
         self
     }
 
-    /// Appends a literal SQL expression as a value.
-    pub fn value_raw<C>(mut self, column: Column<C>, sql: impl Into<String>) -> Self {
-        self.values.push((column.name(), Expr::raw(sql)));
-        self
-    }
-
     pub(crate) fn into_values(self) -> Vec<(&'static str, Expr<(), D>)> {
         self.values
     }

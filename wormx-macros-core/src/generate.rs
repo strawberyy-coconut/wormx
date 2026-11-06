@@ -951,12 +951,6 @@ fn quote_api_impl(
                 ::wormx::Query::new()
             }
 
-            pub fn filter<D: ::wormx::Dialect + ::std::clone::Clone>(
-                filter: ::wormx::Expr<bool, D>,
-            ) -> ::wormx::Filtered<D, #struct_ident> {
-                ::wormx::Filtered::new(filter)
-            }
-
             #primary_key_field
 
             pub fn fields() -> #fields_ident {
@@ -1117,10 +1111,6 @@ fn quote_composite_handle(relation: &Relation) -> TokenStream {
 
             pub fn is_loaded(&self) -> bool {
                 self.deferred.is_loaded()
-            }
-
-            pub fn deferred(self) -> &'a ::wormx::Deferred<#storage_ty> {
-                self.deferred
             }
         }
 

@@ -2,10 +2,7 @@
 
 use std::marker::PhantomData;
 
-use sqlx_core::database::Database;
 use sqlx_core::encode::Encode;
-use sqlx_core::error::Result;
-use sqlx_core::from_row::FromRow;
 use sqlx_core::types::Type;
 
 use super::backend::Dialect;
@@ -70,19 +67,6 @@ impl<T: Table + 'static, K> BelongsTo<T, K> {
     pub fn key(&self) -> Option<&K> {
         self.key.as_ref()
     }
-
-    /// Loads the related row.
-    pub async fn first<D>(self, db: &Db<D>) -> Result<Option<T>>
-    where
-        D: Dialect + Clone,
-        K: Clone + for<'q> Encode<'q, D::DB> + Type<D::DB> + Send + 'static,
-        T: Send + Unpin + for<'r> FromRow<'r, <D::DB as Database>::Row>,
-        <D::DB as Database>::Arguments: sqlx_core::arguments::IntoArguments<D::DB>,
-        for<'c> &'c mut <D::DB as Database>::Connection:
-            sqlx_core::executor::Executor<'c, Database = D::DB>,
-    {
-        db.query(self).first().await
-    }
 }
 
 impl<D, T, K> IntoSelect<D> for BelongsTo<T, K>
@@ -127,19 +111,6 @@ impl<T: Table + 'static, K> HasMany<T, K> {
             _marker: PhantomData,
         }
     }
-
-    /// Loads the related rows.
-    pub async fn exec<D>(self, db: &Db<D>) -> Result<Vec<T>>
-    where
-        D: Dialect + Clone,
-        K: Clone + for<'q> Encode<'q, D::DB> + Type<D::DB> + Send + 'static,
-        T: Send + Unpin + for<'r> FromRow<'r, <D::DB as Database>::Row>,
-        <D::DB as Database>::Arguments: sqlx_core::arguments::IntoArguments<D::DB>,
-        for<'c> &'c mut <D::DB as Database>::Connection:
-            sqlx_core::executor::Executor<'c, Database = D::DB>,
-    {
-        db.query(self).exec().await
-    }
 }
 
 impl<D, T, K> IntoSelect<D> for HasMany<T, K>
@@ -159,9 +130,9 @@ where
 
 /// A borrowed view of a `HasMany` relation.
 ///
-/// The same value can be used as a query (`db.query(user.todos())` or
-/// `user.todos().exec(&db)`) and to inspect the result of a previous
-/// `.include(...)` (`user.todos().loaded()`).
+/// The same value can be used as a query source (`db.query(user.todos())`) and
+/// to inspect the result of a previous `.include(...)`
+/// (`user.todos().loaded()`).
 pub struct HasManyRef<'a, T: Table, K> {
     key: K,
     foreign_key: &'static str,
@@ -191,31 +162,6 @@ impl<'a, T: Table + 'static, K> HasManyRef<'a, T, K> {
     /// Returns whether the relation has been loaded.
     pub fn is_loaded(&self) -> bool {
         self.deferred.is_loaded()
-    }
-
-    /// Returns the deferred value.
-    pub fn deferred(self) -> &'a Deferred<Vec<T>> {
-        self.deferred
-    }
-}
-
-impl<'a, T, K> HasManyRef<'a, T, K>
-where
-    T: Table + 'static,
-{
-    /// Loads the related rows.
-    pub async fn exec<D>(&self, db: &Db<D>) -> Result<Vec<T>>
-    where
-        D: Dialect + Clone,
-        K: Clone + for<'q> Encode<'q, D::DB> + Type<D::DB> + Send + 'static,
-        T: Send + Unpin + for<'r> FromRow<'r, <D::DB as Database>::Row>,
-        <D::DB as Database>::Arguments: sqlx_core::arguments::IntoArguments<D::DB>,
-        for<'c> &'c mut <D::DB as Database>::Connection:
-            sqlx_core::executor::Executor<'c, Database = D::DB>,
-    {
-        db.query(HasMany::<T, K>::new(self.key.clone(), self.foreign_key))
-            .exec()
-            .await
     }
 }
 
@@ -271,33 +217,6 @@ impl<'a, T: Table + 'static, K> BelongsToRef<'a, T, K> {
     /// Returns whether the relation has been loaded.
     pub fn is_loaded(&self) -> bool {
         self.deferred.is_loaded()
-    }
-
-    /// Returns the deferred value.
-    pub fn deferred(self) -> &'a Deferred<T> {
-        self.deferred
-    }
-}
-
-impl<'a, T, K> BelongsToRef<'a, T, K>
-where
-    T: Table + 'static,
-{
-    /// Loads the related row.
-    pub async fn first<D>(&self, db: &Db<D>) -> Result<Option<T>>
-    where
-        D: Dialect + Clone,
-        K: Clone + for<'q> Encode<'q, D::DB> + Type<D::DB> + Send + 'static,
-        T: Send + Unpin + for<'r> FromRow<'r, <D::DB as Database>::Row>,
-        <D::DB as Database>::Arguments: sqlx_core::arguments::IntoArguments<D::DB>,
-        for<'c> &'c mut <D::DB as Database>::Connection:
-            sqlx_core::executor::Executor<'c, Database = D::DB>,
-    {
-        let relation = match self.target_column {
-            Some(column) => BelongsTo::<T, K>::with_column(self.key.clone(), column),
-            None => BelongsTo::<T, K>::new(self.key.clone()),
-        };
-        db.query(relation).first().await
     }
 }
 
@@ -361,33 +280,6 @@ impl<'a, T: Table + 'static, K> OptionalBelongsToRef<'a, T, K> {
     /// Returns whether the relation has been loaded.
     pub fn is_loaded(&self) -> bool {
         self.deferred.is_loaded()
-    }
-
-    /// Returns the deferred value.
-    pub fn deferred(self) -> &'a Deferred<Option<T>> {
-        self.deferred
-    }
-}
-
-impl<'a, T, K> OptionalBelongsToRef<'a, T, K>
-where
-    T: Table + 'static,
-{
-    /// Loads the related row.
-    pub async fn first<D>(&self, db: &Db<D>) -> Result<Option<T>>
-    where
-        D: Dialect + Clone,
-        K: Clone + for<'q> Encode<'q, D::DB> + Type<D::DB> + Send + 'static,
-        T: Send + Unpin + for<'r> FromRow<'r, <D::DB as Database>::Row>,
-        <D::DB as Database>::Arguments: sqlx_core::arguments::IntoArguments<D::DB>,
-        for<'c> &'c mut <D::DB as Database>::Connection:
-            sqlx_core::executor::Executor<'c, Database = D::DB>,
-    {
-        let relation = match self.target_column {
-            Some(column) => BelongsTo::<T, K>::optional_with_column(self.key.clone(), column),
-            None => BelongsTo::<T, K>::optional(self.key.clone()),
-        };
-        db.query(relation).first().await
     }
 }
 

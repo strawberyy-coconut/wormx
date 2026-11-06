@@ -290,7 +290,8 @@ mod tests {
         assert_eq!(users[1].name, "Batch Bob 3");
 
         let deleted = db
-            .delete_many::<WormxUsers>(WormxUsers::fields().name().like("Batch%".to_owned()))
+            .delete::<WormxUsers>()
+            .filter(WormxUsers::fields().name().like("Batch%".to_owned()))
             .exec_returning_in(&mut tx)
             .await
             .expect("batch delete with OUTPUT");
