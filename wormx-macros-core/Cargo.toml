@@ -12,7 +12,7 @@ readme = "README.md"
 doctest = false
 
 [dependencies]
-wormx-core = { path = "../wormx-core", version = "0.2.0" }
+wormx-core = { path = "../wormx-core", version = "0.2.1" }
 
 sqlx-core = { workspace = true }
 
