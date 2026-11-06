@@ -6,7 +6,7 @@
 //!
 //! The module is split into:
 //!
-//! - [`syntax`]: `Dialect`, `SqlSyntax`, and capability markers.
+//! - [`syntax`]: `SqlSyntax` spelling hooks and SQL-specific marker types.
 //! - [`writer`]: the `String` plus bound-arguments writer.
 //! - [`expr`]: typed expressions, functions, and operators.
 //! - [`render`]: the SQL implementations of the operation renderers.

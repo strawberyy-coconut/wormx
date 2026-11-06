@@ -5,8 +5,9 @@ cargo run -p wormx-example-mssql
 ```
 
 The build script connects to `master`, creates `wormx_example` if needed, then
-creates `dbo.app_users` and `dbo.app_todos` and writes the schema cache under
-`OUT_DIR`.
+creates `dbo.app_users` and `dbo.app_todos`. A fresh schema cache is written
+under `OUT_DIR` when no committed `.wormx` entry is present; this example
+ships one, so the committed cache is reused by default.
 
 Set `MSSQL_URL` to use a different server:
 

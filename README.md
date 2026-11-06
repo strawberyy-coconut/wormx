@@ -223,7 +223,7 @@ MSSQL connection URLs use `mssql://`. The development default is:
 mssql://sa:Password1!@mssql:1433/master?encrypt=on&trust_certificate=true
 ```
 
-The MSSQL `json` feature is currently a no-op because `sqlx-mssql-rs` 0.1.0
+The MSSQL `json` feature is currently a no-op because `sqlx-mssql-rs` 0.1.x
 enables `serde_json` but not `serde`, so enabling it fails to compile the
 driver. Other MSSQL type features (`chrono`, `time`, `uuid`, `bigdecimal`,
 `rust_decimal`) are forwarded.
@@ -340,6 +340,10 @@ db.upsert_many::<Users>()
 row. It renders as `excluded.column` on PostgreSQL/SQLite, `VALUES(column)` on
 MySQL, and `source.column` on SQL Server. The same method is available on
 single-row `upsert`.
+
+`insert_many`, `upsert_many`, and `update_many` also provide
+`.rows(items, |item, row| ...)`, which adds one row per item produced by
+`items`.
 
 Per-row updates use one key column and a `CASE` expression for each changed
 column. Rows that omit a column leave its existing value unchanged:
@@ -879,6 +883,11 @@ hiding it. Raw SQL exists so applications are not blocked in the meantime.
 ```toml
 [wormx]
 cache-dir = ".wormx"
+
+# Force a built-in driver instead of inferring it from the URL scheme.
+# Values are driver names or aliases such as "postgres", "sqlite", "mysql",
+# or "mssql".
+# dialect = "postgres"
 
 [wormx.database]
 url-var = "DATABASE_URL"
