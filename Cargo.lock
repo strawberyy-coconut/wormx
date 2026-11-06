@@ -2123,9 +2123,9 @@ dependencies = [
 
 [[package]]
 name = "sqlx-mssql-rs"
-version = "0.1.1"
+version = "0.1.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "0921d347888a1e5e0efe1bd48b9c2e21805aed6b3d92a31fc24a9b797537f6db"
+checksum = "fa9001ba2605199852d8cdc29d790e996ca330ed04e7df257221fd925fbef909"
 dependencies = [
  "sqlx-core",
  "sqlx-mssql-rs-core",
@@ -2134,9 +2134,9 @@ dependencies = [
 
 [[package]]
 name = "sqlx-mssql-rs-core"
-version = "0.1.1"
+version = "0.1.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "87445e1829648b6088e80fa64ac29e10e6246d882dfd23323e84f5219b38dfe0"
+checksum = "1bfc9e04bfa030f09a2c39ba8aa9da9181dd938cd3f12cfefe9dc19fdbbba7f6"
 dependencies = [
  "async-stream",
  "bigdecimal",
@@ -2158,9 +2158,9 @@ dependencies = [
 
 [[package]]
 name = "sqlx-mssql-rs-macros"
-version = "0.1.1"
+version = "0.1.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "4de63c848fe3410211c17a208a7938b41dee5e7808aed7a872dee64c1d9b4adf"
+checksum = "abf63cc1022a8810e0e03c2e5b5155f3d71fcc8196d9b9c0a541c2e2d184d220"
 dependencies = [
  "proc-macro2",
  "quote",
