@@ -14,7 +14,7 @@ pub use wormx_core::{
     HasMany, HasManyRef, Include, Insert, InsertMany, InsertManyPlan, InsertPlan, InsertRenderer,
     IntoExpr, IntoSelect, Join, JoinConstraint, JoinKind, JoinSource, LogicalOp, Operator,
     OperatorExpr, OptionalBelongsToRef, Order, ProjectedSelect, Projection, ProjectionVisitor,
-    Query, RawQuery, RelationDef, RelationKind, RowBuilder, Scalar, Select, SelectPlan,
+    Query, RawQuery, RelationDef, RelationKind, Returning, RowBuilder, Scalar, Select, SelectPlan,
     SelectRenderer, SqlDelete, SqlDialect, SqlInsert, SqlSelect, SqlSyntax, SqlUpdate, SqlUpsert,
     SqlWriter, StarProjection, Subquery, SupportsArrays, SupportsFullJoin, SupportsFullTextSearch,
     SupportsJson, SupportsNaturalJoin, SupportsReturning, SupportsSourceSuffix,

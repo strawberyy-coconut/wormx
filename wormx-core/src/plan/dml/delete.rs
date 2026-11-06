@@ -12,6 +12,7 @@ use sqlx_core::sql_str::{AssertSqlSafe, SqlSafeStr};
 
 use crate::exec::{Db, Transaction};
 use crate::plan::backend::{Dialect, SupportsReturning, SupportsSourceSuffix};
+use crate::plan::dml::Returning;
 use crate::plan::expr::Expr;
 use crate::plan::join::TableSource;
 use crate::plan::query::{DeletePlan, DeleteRenderer};
@@ -50,6 +51,17 @@ impl<D: Dialect + Clone, T: Table> Delete<D, T> {
         self
     }
 
+    /// Renders `DELETE ... RETURNING *` and decodes the deleted rows when
+    /// executed.
+    ///
+    /// Available only for dialects that implement [`SupportsReturning`].
+    pub fn returning(self) -> Returning<Self>
+    where
+        D: SupportsReturning,
+    {
+        Returning::new(self)
+    }
+
     /// Executes the statement.
     pub async fn exec(mut self) -> Result<<D::DB as Database>::QueryResult>
     where
@@ -77,34 +89,6 @@ impl<D: Dialect + Clone, T: Table> Delete<D, T> {
             .await
     }
 
-    /// Executes the statement and returns the affected rows.
-    pub async fn exec_returning(mut self) -> Result<Vec<T>>
-    where
-        D: SupportsReturning,
-        T: Send + Unpin + for<'r> FromRow<'r, <D::DB as Database>::Row>,
-        <D::DB as Database>::Arguments: sqlx_core::arguments::IntoArguments<D::DB>,
-        for<'c> &'c mut <D::DB as Database>::Connection: Executor<'c, Database = D::DB>,
-    {
-        let (sql, arguments) = self.render(true)?;
-        query_as_with::<D::DB, T, _>(AssertSqlSafe(sql).into_sql_str(), arguments)
-            .fetch_all(self.db.pool())
-            .await
-    }
-
-    /// Executes the statement inside a transaction and returns the affected rows.
-    pub async fn exec_returning_in(mut self, tx: &mut Transaction<'_, D>) -> Result<Vec<T>>
-    where
-        D: SupportsReturning,
-        T: Send + Unpin + for<'r> FromRow<'r, <D::DB as Database>::Row>,
-        <D::DB as Database>::Arguments: sqlx_core::arguments::IntoArguments<D::DB>,
-        for<'c> &'c mut <D::DB as Database>::Connection: Executor<'c, Database = D::DB>,
-    {
-        let (sql, arguments) = self.render(true)?;
-        query_as_with::<D::DB, T, _>(AssertSqlSafe(sql).into_sql_str(), arguments)
-            .fetch_all(tx.connection())
-            .await
-    }
-
     fn render(&mut self, returning: bool) -> Result<(String, <D::DB as Database>::Arguments)> {
         let mut writer = self.db.writer();
         D::Delete::default().write(
@@ -116,5 +100,35 @@ impl<D: Dialect + Clone, T: Table> Delete<D, T> {
             &mut writer,
         )?;
         Ok(writer.finish())
+    }
+}
+
+impl<D: Dialect + Clone, T: Table> Returning<Delete<D, T>> {
+    /// Executes the statement and returns the affected rows.
+    pub async fn exec(mut self) -> Result<Vec<T>>
+    where
+        D: SupportsReturning,
+        T: Send + Unpin + for<'r> FromRow<'r, <D::DB as Database>::Row>,
+        <D::DB as Database>::Arguments: sqlx_core::arguments::IntoArguments<D::DB>,
+        for<'c> &'c mut <D::DB as Database>::Connection: Executor<'c, Database = D::DB>,
+    {
+        let (sql, arguments) = self.inner.render(true)?;
+        query_as_with::<D::DB, T, _>(AssertSqlSafe(sql).into_sql_str(), arguments)
+            .fetch_all(self.inner.db.pool())
+            .await
+    }
+
+    /// Executes the statement inside a transaction and returns the affected rows.
+    pub async fn exec_in(mut self, tx: &mut Transaction<'_, D>) -> Result<Vec<T>>
+    where
+        D: SupportsReturning,
+        T: Send + Unpin + for<'r> FromRow<'r, <D::DB as Database>::Row>,
+        <D::DB as Database>::Arguments: sqlx_core::arguments::IntoArguments<D::DB>,
+        for<'c> &'c mut <D::DB as Database>::Connection: Executor<'c, Database = D::DB>,
+    {
+        let (sql, arguments) = self.inner.render(true)?;
+        query_as_with::<D::DB, T, _>(AssertSqlSafe(sql).into_sql_str(), arguments)
+            .fetch_all(tx.connection())
+            .await
     }
 }

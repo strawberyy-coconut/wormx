@@ -17,6 +17,7 @@ use sqlx_core::types::Type;
 
 use crate::exec::{Db, Transaction};
 use crate::plan::backend::{Dialect, SupportsReturning, SupportsSourceSuffix};
+use crate::plan::dml::Returning;
 use crate::plan::expr::{ColumnRef, Expr, ExprKind, IntoExpr};
 use crate::plan::join::TableSource;
 use crate::plan::query::{Column, UpdatePlan, UpdateRenderer};
@@ -149,6 +150,17 @@ impl<D: Dialect + Clone, T: Table, K> UpdateMany<D, T, K> {
         self
     }
 
+    /// Renders `UPDATE ... RETURNING *` and decodes every updated row when
+    /// executed.
+    ///
+    /// Available only for dialects that implement [`SupportsReturning`].
+    pub fn returning(self) -> Returning<Self>
+    where
+        D: SupportsReturning,
+    {
+        Returning::new(self)
+    }
+
     /// Executes the statement.
     pub async fn exec(self) -> Result<<D::DB as Database>::QueryResult>
     where
@@ -176,38 +188,6 @@ impl<D: Dialect + Clone, T: Table, K> UpdateMany<D, T, K> {
         let (sql, arguments) = self.render(false)?;
         query_with::<D::DB, _>(AssertSqlSafe(sql).into_sql_str(), arguments)
             .execute(tx.connection())
-            .await
-    }
-
-    /// Executes the statement and decodes every updated row.
-    pub async fn exec_returning(self) -> Result<Vec<T>>
-    where
-        D: SupportsReturning,
-        T: Send + Unpin + for<'r> FromRow<'r, <D::DB as Database>::Row>,
-        K: Clone + PartialEq + for<'q> Encode<'q, D::DB> + Type<D::DB> + Send + 'static,
-        <D::DB as Database>::Arguments: sqlx_core::arguments::IntoArguments<D::DB>,
-        for<'c> &'c mut <D::DB as Database>::Connection: Executor<'c, Database = D::DB>,
-    {
-        let pool = self.db.pool().clone();
-        let (sql, arguments) = self.render(true)?;
-        query_as_with::<D::DB, T, _>(AssertSqlSafe(sql).into_sql_str(), arguments)
-            .fetch_all(&pool)
-            .await
-    }
-
-    /// Executes the statement inside a transaction and decodes every updated
-    /// row.
-    pub async fn exec_returning_in(self, tx: &mut Transaction<'_, D>) -> Result<Vec<T>>
-    where
-        D: SupportsReturning,
-        T: Send + Unpin + for<'r> FromRow<'r, <D::DB as Database>::Row>,
-        K: Clone + PartialEq + for<'q> Encode<'q, D::DB> + Type<D::DB> + Send + 'static,
-        <D::DB as Database>::Arguments: sqlx_core::arguments::IntoArguments<D::DB>,
-        for<'c> &'c mut <D::DB as Database>::Connection: Executor<'c, Database = D::DB>,
-    {
-        let (sql, arguments) = self.render(true)?;
-        query_as_with::<D::DB, T, _>(AssertSqlSafe(sql).into_sql_str(), arguments)
-            .fetch_all(tx.connection())
             .await
     }
 
@@ -315,5 +295,39 @@ impl<D: Dialect + Clone, T: Table, K> UpdateMany<D, T, K> {
             &mut writer,
         )?;
         Ok(writer.finish())
+    }
+}
+
+impl<D: Dialect + Clone, T: Table, K> Returning<UpdateMany<D, T, K>> {
+    /// Executes the statement and decodes every updated row.
+    pub async fn exec(self) -> Result<Vec<T>>
+    where
+        D: SupportsReturning,
+        T: Send + Unpin + for<'r> FromRow<'r, <D::DB as Database>::Row>,
+        K: Clone + PartialEq + for<'q> Encode<'q, D::DB> + Type<D::DB> + Send + 'static,
+        <D::DB as Database>::Arguments: sqlx_core::arguments::IntoArguments<D::DB>,
+        for<'c> &'c mut <D::DB as Database>::Connection: Executor<'c, Database = D::DB>,
+    {
+        let pool = self.inner.db.pool().clone();
+        let (sql, arguments) = self.inner.render(true)?;
+        query_as_with::<D::DB, T, _>(AssertSqlSafe(sql).into_sql_str(), arguments)
+            .fetch_all(&pool)
+            .await
+    }
+
+    /// Executes the statement inside a transaction and decodes every updated
+    /// row.
+    pub async fn exec_in(self, tx: &mut Transaction<'_, D>) -> Result<Vec<T>>
+    where
+        D: SupportsReturning,
+        T: Send + Unpin + for<'r> FromRow<'r, <D::DB as Database>::Row>,
+        K: Clone + PartialEq + for<'q> Encode<'q, D::DB> + Type<D::DB> + Send + 'static,
+        <D::DB as Database>::Arguments: sqlx_core::arguments::IntoArguments<D::DB>,
+        for<'c> &'c mut <D::DB as Database>::Connection: Executor<'c, Database = D::DB>,
+    {
+        let (sql, arguments) = self.inner.render(true)?;
+        query_as_with::<D::DB, T, _>(AssertSqlSafe(sql).into_sql_str(), arguments)
+            .fetch_all(tx.connection())
+            .await
     }
 }

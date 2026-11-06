@@ -30,8 +30,8 @@ pub use config::{
 pub use exec::{Db, RawQuery, Transaction};
 pub use plan::deferred::Deferred;
 pub use plan::dml::{
-    Delete, Insert, InsertMany, RowBuilder, Update, UpdateMany, UpdateManyStart, UpdateRow, Upsert,
-    UpsertMany,
+    Delete, Insert, InsertMany, Returning, RowBuilder, Update, UpdateMany, UpdateManyStart,
+    UpdateRow, Upsert, UpsertMany,
 };
 pub use plan::expr::{
     BindValue, Case, ColumnExpr, ColumnRef, CustomNode, Expr, ExprKind, IntoExpr, LogicalOp, Order,

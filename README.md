@@ -266,7 +266,8 @@ let updated = db
     .update::<Users>()
     .set(Users::fields().active(), false)
     .filter(Users::fields().name().eq("Alice".to_owned()))
-    .exec_returning()   // Postgres, SQLite, and SQL Server
+    .returning()
+    .exec()   // Postgres, SQLite, and SQL Server
     .await?;
 
 db.delete::<Users>()
@@ -278,7 +279,7 @@ db.delete::<Users>()
 Single-row insert and update values accept either Rust values or expressions;
 use `.value_raw(...)` / `.set_raw(...)` for SQL expressions such as `NOW()`.
 Batch rows use `.value_expr(..., Expr::raw(...))` instead.
-`exec_returning()` decodes returned rows and is only available on dialects with
+`.returning().exec()` decodes returned rows and is only available on dialects with
 returned-row support: `RETURNING *` on PostgreSQL and SQLite, and
 `OUTPUT INSERTED.*` / `OUTPUT DELETED.*` on SQL Server. Plain `exec()` returns
 the driver's `QueryResult`.
@@ -298,7 +299,7 @@ db.upsert::<Users>()
 
 `conflict_on` is the conflict target for PostgreSQL/SQLite and the join key for
 SQL Server's `MERGE`; MySQL ignores it because `ON DUPLICATE KEY` chooses the
-unique index itself. `exec_returning` remains dialect-gated: SQL Server emits
+unique index itself. `returning()` remains dialect-gated: SQL Server emits
 `OUTPUT INSERTED.*` after the final `WHEN` clause, and MySQL does not support
 returned rows.
 
@@ -316,7 +317,8 @@ let inserted = db
     .row(|row| row
         .value(Users::fields().name(), "Bob".to_owned())
         .value(Users::fields().active(), false))
-    .exec_returning()
+    .returning()
+    .exec()
     .await?;
 ```
 
@@ -856,7 +858,7 @@ Supported directly:
 - CTEs (`.with(...)`) and window functions (`.over(...)`)
 - insert, update, delete, and upsert builders
 - multi-row `INSERT` and `UPSERT`, plus per-row `UPDATE ... CASE` batches
-- `RETURNING` on dialects that support it (`exec_returning`)
+- `RETURNING` on dialects that support it (`.returning().exec()`)
 - driver-specific `LIMIT/OFFSET` spelling, plus opaque source suffixes and tails
   for dialect extensions such as SQL Server hints and `OPTION (...)`
 - explicit grouping for custom operators, plus `Expr::group()`
@@ -1105,7 +1107,7 @@ impl wormx::SqlSyntax for MssqlDialect {
 ```
 
 Capabilities are marker traits, not a separate boolean table. For example,
-`SupportsReturning` gates `exec_returning`, `SupportsFullJoin` gates
+`SupportsReturning` gates `.returning()`, `SupportsFullJoin` gates
 `Join::full`, `SupportsUsing` gates `Join::using`, `SupportsNaturalJoin` gates
 `Join::natural`, and `SupportsUpsert` gates `Db::upsert`. An unsupported
 operation is a compile-time error instead of a rendered statement that the

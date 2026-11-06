@@ -177,7 +177,8 @@ mod tests {
             .value(WormxUsers::fields().name(), "Returning User".to_owned())
             .value(WormxUsers::fields().email(), None::<String>)
             .value(WormxUsers::fields().active(), true)
-            .exec_returning_in(&mut tx)
+            .returning()
+            .exec_in(&mut tx)
             .await
             .expect("insert with OUTPUT");
         assert!(inserted.id > 0);
@@ -187,7 +188,8 @@ mod tests {
             .update::<WormxUsers>()
             .set(WormxUsers::fields().name(), "Updated User".to_owned())
             .filter(WormxUsers::fields().id().eq(inserted.id))
-            .exec_returning_in(&mut tx)
+            .returning()
+            .exec_in(&mut tx)
             .await
             .expect("update with OUTPUT");
         assert_eq!(updated.len(), 1);
@@ -196,7 +198,8 @@ mod tests {
         let deleted = db
             .delete::<WormxUsers>()
             .filter(WormxUsers::fields().id().eq(inserted.id))
-            .exec_returning_in(&mut tx)
+            .returning()
+            .exec_in(&mut tx)
             .await
             .expect("delete with OUTPUT");
         assert_eq!(deleted.len(), 1);
@@ -225,7 +228,8 @@ mod tests {
                     .value(WormxUsers::fields().email(), None::<String>)
                     .value(WormxUsers::fields().active(), false)
             })
-            .exec_returning_in(&mut tx)
+            .returning()
+            .exec_in(&mut tx)
             .await
             .expect("batch insert with OUTPUT");
         assert_eq!(inserted.len(), 2);
@@ -254,7 +258,8 @@ mod tests {
             .conflict_on(WormxUsers::fields().id())
             .update_from_input(WormxUsers::fields().name())
             .update_from_input(WormxUsers::fields().active())
-            .exec_returning_in(&mut tx)
+            .returning()
+            .exec_in(&mut tx)
             .await
             .expect("batch merge with OUTPUT");
         assert_eq!(upserted.len(), 3);
@@ -292,7 +297,8 @@ mod tests {
         let deleted = db
             .delete::<WormxUsers>()
             .filter(WormxUsers::fields().name().like("Batch%".to_owned()))
-            .exec_returning_in(&mut tx)
+            .returning()
+            .exec_in(&mut tx)
             .await
             .expect("batch delete with OUTPUT");
         assert_eq!(deleted.len(), 3);

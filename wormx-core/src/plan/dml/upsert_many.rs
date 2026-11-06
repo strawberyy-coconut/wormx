@@ -12,6 +12,7 @@ use sqlx_core::sql_str::{AssertSqlSafe, SqlSafeStr};
 
 use crate::exec::{Db, Transaction};
 use crate::plan::backend::{Dialect, SupportsReturning, SupportsSourceSuffix};
+use crate::plan::dml::Returning;
 use crate::plan::dml::batch::{RowBuilder, normalize_rows};
 use crate::plan::expr::{Expr, IntoExpr};
 use crate::plan::join::TableSource;
@@ -100,6 +101,17 @@ impl<D: Dialect + Clone, T: Table> UpsertMany<D, T> {
         self
     }
 
+    /// Renders the upsert's returned-row clause and decodes every affected row
+    /// when executed.
+    ///
+    /// Available only for dialects that implement [`SupportsReturning`].
+    pub fn returning(self) -> Returning<Self>
+    where
+        D: SupportsReturning,
+    {
+        Returning::new(self)
+    }
+
     /// Executes the statement.
     pub async fn exec(self) -> Result<<D::DB as Database>::QueryResult>
     where
@@ -125,36 +137,6 @@ impl<D: Dialect + Clone, T: Table> UpsertMany<D, T> {
         let (sql, arguments) = self.render(false)?;
         query_with::<D::DB, _>(AssertSqlSafe(sql).into_sql_str(), arguments)
             .execute(tx.connection())
-            .await
-    }
-
-    /// Executes the statement and decodes every affected row.
-    pub async fn exec_returning(self) -> Result<Vec<T>>
-    where
-        D: SupportsReturning,
-        T: Send + Unpin + for<'r> FromRow<'r, <D::DB as Database>::Row>,
-        <D::DB as Database>::Arguments: sqlx_core::arguments::IntoArguments<D::DB>,
-        for<'c> &'c mut <D::DB as Database>::Connection: Executor<'c, Database = D::DB>,
-    {
-        let pool = self.db.pool().clone();
-        let (sql, arguments) = self.render(true)?;
-        query_as_with::<D::DB, T, _>(AssertSqlSafe(sql).into_sql_str(), arguments)
-            .fetch_all(&pool)
-            .await
-    }
-
-    /// Executes the statement inside a transaction and decodes every affected
-    /// row.
-    pub async fn exec_returning_in(self, tx: &mut Transaction<'_, D>) -> Result<Vec<T>>
-    where
-        D: SupportsReturning,
-        T: Send + Unpin + for<'r> FromRow<'r, <D::DB as Database>::Row>,
-        <D::DB as Database>::Arguments: sqlx_core::arguments::IntoArguments<D::DB>,
-        for<'c> &'c mut <D::DB as Database>::Connection: Executor<'c, Database = D::DB>,
-    {
-        let (sql, arguments) = self.render(true)?;
-        query_as_with::<D::DB, T, _>(AssertSqlSafe(sql).into_sql_str(), arguments)
-            .fetch_all(tx.connection())
             .await
     }
 
@@ -196,5 +178,37 @@ impl<D: Dialect + Clone, T: Table> UpsertMany<D, T> {
             &mut writer,
         )?;
         Ok(writer.finish())
+    }
+}
+
+impl<D: Dialect + Clone, T: Table> Returning<UpsertMany<D, T>> {
+    /// Executes the statement and decodes every affected row.
+    pub async fn exec(self) -> Result<Vec<T>>
+    where
+        D: SupportsReturning,
+        T: Send + Unpin + for<'r> FromRow<'r, <D::DB as Database>::Row>,
+        <D::DB as Database>::Arguments: sqlx_core::arguments::IntoArguments<D::DB>,
+        for<'c> &'c mut <D::DB as Database>::Connection: Executor<'c, Database = D::DB>,
+    {
+        let pool = self.inner.db.pool().clone();
+        let (sql, arguments) = self.inner.render(true)?;
+        query_as_with::<D::DB, T, _>(AssertSqlSafe(sql).into_sql_str(), arguments)
+            .fetch_all(&pool)
+            .await
+    }
+
+    /// Executes the statement inside a transaction and decodes every affected
+    /// row.
+    pub async fn exec_in(self, tx: &mut Transaction<'_, D>) -> Result<Vec<T>>
+    where
+        D: SupportsReturning,
+        T: Send + Unpin + for<'r> FromRow<'r, <D::DB as Database>::Row>,
+        <D::DB as Database>::Arguments: sqlx_core::arguments::IntoArguments<D::DB>,
+        for<'c> &'c mut <D::DB as Database>::Connection: Executor<'c, Database = D::DB>,
+    {
+        let (sql, arguments) = self.inner.render(true)?;
+        query_as_with::<D::DB, T, _>(AssertSqlSafe(sql).into_sql_str(), arguments)
+            .fetch_all(tx.connection())
+            .await
     }
 }

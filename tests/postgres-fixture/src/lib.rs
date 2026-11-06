@@ -223,7 +223,8 @@ mod tests {
                     .value(WormxUsers::fields().email(), None::<String>)
                     .value(WormxUsers::fields().active(), false)
             })
-            .exec_returning()
+            .returning()
+            .exec()
             .await
             .expect("batch insert");
         assert_eq!(inserted.len(), 2);
@@ -246,7 +247,8 @@ mod tests {
             .conflict_on(WormxUsers::fields().id())
             .update_from_input(WormxUsers::fields().name())
             .update_from_input(WormxUsers::fields().active())
-            .exec_returning()
+            .returning()
+            .exec()
             .await
             .expect("batch upsert");
         assert_eq!(upserted.len(), 2);

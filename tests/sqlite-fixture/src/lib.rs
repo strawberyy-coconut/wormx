@@ -892,7 +892,8 @@ mod tests {
             .update::<Users>()
             .set(Users::fields().active(), true)
             .filter(Users::fields().id().eq(40_i64))
-            .exec_returning()
+            .returning()
+            .exec()
             .await
             .expect("update with returning");
         assert_eq!(returned.len(), 1);
@@ -1624,7 +1625,8 @@ mod tests {
                     .value(Users::fields().email(), None::<String>)
                     .value(Users::fields().active(), false)
             })
-            .exec_returning()
+            .returning()
+            .exec()
             .await
             .expect("batch insert");
         assert_eq!(inserted.len(), 2);
@@ -1647,7 +1649,8 @@ mod tests {
             .conflict_on(Users::fields().id())
             .update_from_input(Users::fields().name())
             .update_from_input(Users::fields().active())
-            .exec_returning()
+            .returning()
+            .exec()
             .await
             .expect("batch upsert");
         assert_eq!(upserted.len(), 2);
@@ -1677,7 +1680,8 @@ mod tests {
                     .value(Users::fields().active(), true)
             })
             .row(|row| row.key(81_i64).value(Users::fields().name(), "Batch Bob 2"))
-            .exec_returning()
+            .returning()
+            .exec()
             .await
             .expect("batch update");
         assert_eq!(updated.len(), 2);

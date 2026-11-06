@@ -12,6 +12,7 @@ use sqlx_core::sql_str::{AssertSqlSafe, SqlSafeStr};
 
 use crate::exec::{Db, Transaction};
 use crate::plan::backend::{Dialect, SupportsReturning};
+use crate::plan::dml::Returning;
 use crate::plan::expr::{Expr, IntoExpr};
 use crate::plan::query::{Column, InsertPlan, InsertRenderer};
 use crate::schema::Table;
@@ -59,6 +60,17 @@ impl<D: Dialect + Clone, T: Table> Insert<D, T> {
         self
     }
 
+    /// Renders `INSERT ... RETURNING *` and decodes the inserted row when
+    /// executed.
+    ///
+    /// Available only for dialects that implement [`SupportsReturning`].
+    pub fn returning(self) -> Returning<Self>
+    where
+        D: SupportsReturning,
+    {
+        Returning::new(self)
+    }
+
     /// Executes the statement.
     pub async fn exec(mut self) -> Result<<D::DB as Database>::QueryResult>
     where
@@ -86,34 +98,6 @@ impl<D: Dialect + Clone, T: Table> Insert<D, T> {
             .await
     }
 
-    /// Executes `INSERT ... RETURNING *` and decodes the inserted row.
-    pub async fn exec_returning(mut self) -> Result<T>
-    where
-        D: SupportsReturning,
-        T: Send + Unpin + for<'r> FromRow<'r, <D::DB as Database>::Row>,
-        <D::DB as Database>::Arguments: sqlx_core::arguments::IntoArguments<D::DB>,
-        for<'c> &'c mut <D::DB as Database>::Connection: Executor<'c, Database = D::DB>,
-    {
-        let (sql, arguments) = self.render(true)?;
-        query_as_with::<D::DB, T, _>(AssertSqlSafe(sql).into_sql_str(), arguments)
-            .fetch_one(self.db.pool())
-            .await
-    }
-
-    /// Executes `INSERT ... RETURNING *` inside a transaction.
-    pub async fn exec_returning_in(mut self, tx: &mut Transaction<'_, D>) -> Result<T>
-    where
-        D: SupportsReturning,
-        T: Send + Unpin + for<'r> FromRow<'r, <D::DB as Database>::Row>,
-        <D::DB as Database>::Arguments: sqlx_core::arguments::IntoArguments<D::DB>,
-        for<'c> &'c mut <D::DB as Database>::Connection: Executor<'c, Database = D::DB>,
-    {
-        let (sql, arguments) = self.render(true)?;
-        query_as_with::<D::DB, T, _>(AssertSqlSafe(sql).into_sql_str(), arguments)
-            .fetch_one(tx.connection())
-            .await
-    }
-
     fn render(&mut self, returning: bool) -> Result<(String, <D::DB as Database>::Arguments)> {
         let mut writer = self.db.writer();
         D::Insert::default().write(
@@ -126,5 +110,35 @@ impl<D: Dialect + Clone, T: Table> Insert<D, T> {
             &mut writer,
         )?;
         Ok(writer.finish())
+    }
+}
+
+impl<D: Dialect + Clone, T: Table> Returning<Insert<D, T>> {
+    /// Executes `INSERT ... RETURNING *` and decodes the inserted row.
+    pub async fn exec(mut self) -> Result<T>
+    where
+        D: SupportsReturning,
+        T: Send + Unpin + for<'r> FromRow<'r, <D::DB as Database>::Row>,
+        <D::DB as Database>::Arguments: sqlx_core::arguments::IntoArguments<D::DB>,
+        for<'c> &'c mut <D::DB as Database>::Connection: Executor<'c, Database = D::DB>,
+    {
+        let (sql, arguments) = self.inner.render(true)?;
+        query_as_with::<D::DB, T, _>(AssertSqlSafe(sql).into_sql_str(), arguments)
+            .fetch_one(self.inner.db.pool())
+            .await
+    }
+
+    /// Executes `INSERT ... RETURNING *` inside a transaction.
+    pub async fn exec_in(mut self, tx: &mut Transaction<'_, D>) -> Result<T>
+    where
+        D: SupportsReturning,
+        T: Send + Unpin + for<'r> FromRow<'r, <D::DB as Database>::Row>,
+        <D::DB as Database>::Arguments: sqlx_core::arguments::IntoArguments<D::DB>,
+        for<'c> &'c mut <D::DB as Database>::Connection: Executor<'c, Database = D::DB>,
+    {
+        let (sql, arguments) = self.inner.render(true)?;
+        query_as_with::<D::DB, T, _>(AssertSqlSafe(sql).into_sql_str(), arguments)
+            .fetch_one(tx.connection())
+            .await
     }
 }

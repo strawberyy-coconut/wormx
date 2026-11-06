@@ -34,7 +34,7 @@ pub trait Dialect: Clone + Send + Sync + 'static {
 
 /// Marks a dialect that supports `RETURNING`.
 ///
-/// This gates the `exec_returning` methods on the DML builders, so a dialect
+/// This gates the `returning` methods on the DML builders, so a dialect
 /// without `RETURNING` rejects them at compile time.
 pub trait SupportsReturning: Dialect {}
 /// Marks a dialect that supports `FULL [OUTER] JOIN`.
