@@ -6,6 +6,7 @@ rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
 description = "Schema introspection, caching, and code generation for wormx's table! macro."
+readme = "README.md"
 
 [lib]
 doctest = false

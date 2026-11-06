@@ -6,6 +6,7 @@ rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
 description = "The wormx::table! procedural macro."
+readme = "README.md"
 
 [lib]
 proc-macro = true

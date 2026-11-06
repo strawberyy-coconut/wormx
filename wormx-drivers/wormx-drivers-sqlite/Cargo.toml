@@ -6,6 +6,7 @@ rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
 description = "SQLite dialect and compile-time introspection for wormx."
+readme = "README.md"
 
 [dependencies]
 wormx-core = { path = "../../wormx-core", version = "0.2.0" }

@@ -1,10 +1,171 @@
-//! Typed table generation and query building for sqlx.
+//! Typed table generation and a query DSL for SQLx.
 //!
-//! wormx provides compile-time table introspection and a typed query DSL over
-//! SQLx pools. `wormx::table!` reads the migrated schema and generates row
-//! types, table metadata, and relation accessors. Use SQLx migrations
-//! (`sqlx migrate`, `sqlx-cli`, or `sqlx::migrate!`) to create and evolve the
-//! schema before building.
+//! `wormx` reads your migrated database schema at compile time and generates
+//! row types, table metadata, relation accessors, and a typed builder API. It
+//! does not create or migrate schemas: run SQLx migrations first, then build.
+//!
+//! # Quick start
+//!
+//! Add `wormx` and the matching SQLx driver:
+//!
+//! ```toml
+//! [dependencies]
+//! wormx = { version = "0.2", features = ["postgres"] }
+//! sqlx = { version = "0.9", default-features = false, features = ["runtime-tokio", "postgres"] }
+//! tokio = { version = "1", features = ["full"] }
+//! ```
+//!
+//! Apply migrations with SQLx, then generate a table and query it:
+//!
+//! ```rust,ignore
+//! wormx::table!("public.users");
+//!
+//! #[tokio::main]
+//! async fn main() -> Result<(), Box<dyn std::error::Error>> {
+//!     let pool = sqlx::PgPool::connect(&std::env::var("DATABASE_URL")?).await?;
+//!     let db = wormx::Db::new(pool, wormx::PostgresDialect);
+//!
+//!     let users = db
+//!         .query(Users::all())
+//!         .filter(Users::fields().active().eq(true))
+//!         .order_by(Users::fields().name().asc())
+//!         .limit(20)
+//!         .exec()
+//!         .await?;
+//!
+//!     for user in users {
+//!         println!("{}", user.name);
+//!     }
+//!     Ok(())
+//! }
+//! ```
+//!
+//! `table!` reads the schema from the configured database URL or from the
+//! compile-time cache in `.wormx/`. Commit that cache so CI builds do not need
+//! a database. See [compile-time introspection] for the cache and configuration
+//! rules.
+//!
+//! # Common tasks
+//!
+//! ## Query rows
+//!
+//! ```rust,ignore
+//! let users = db
+//!     .query(Users::all())
+//!     .filter(Users::fields().active().eq(true))
+//!     .order_by(Users::fields().name().asc())
+//!     .limit(20)
+//!     .exec()
+//!     .await?;
+//!
+//! let user = db.query(Users::get(1)).first().await?;
+//! ```
+//!
+//! Use [`Select`] for row queries, [`Query`] / [`Filtered`] for a query source
+//! without a database handle, and [`ProjectedSelect`] after `.select(...)`.
+//!
+//! ## Write rows
+//!
+//! ```rust,ignore
+//! db.insert::<Users>()
+//!     .value(Users::fields().name(), "Alice".to_owned())
+//!     .value(Users::fields().active(), true)
+//!     .exec()
+//!     .await?;
+//!
+//! let updated = db
+//!     .update::<Users>()
+//!     .set(Users::fields().active(), false)
+//!     .filter(Users::fields().name().eq("Alice".to_owned()))
+//!     .returning()
+//!     .exec()
+//!     .await?;
+//! ```
+//!
+//! See [`Insert`], [`Update`], [`Delete`], and [`Upsert`]. Batches are
+//! [`InsertMany`], [`UpsertMany`], and [`UpdateMany`]. `.returning()` is gated
+//! by [`SupportsReturning`].
+//!
+//! ## Load relations
+//!
+//! Foreign keys generate `belongs_to` and `has_many` accessors. The accessor is
+//! both a query source and a loaded-value accessor:
+//!
+//! ```rust,ignore
+//! let todos = db.query(user.todos()).exec().await?;
+//! let owner = db.query(todos[0].user()).first().await?;
+//!
+//! let users = db
+//!     .query(Users::all())
+//!     .include(
+//!         Users::fields()
+//!             .todos()
+//!             .include(Todos::fields().user()),
+//!     )
+//!     .exec()
+//!     .await?;
+//! ```
+//!
+//! See [`BelongsTo`], [`HasMany`], and [`Deferred`]. Eager loading uses
+//! [`Select::include`].
+//!
+//! ## Use a transaction
+//!
+//! ```rust,ignore
+//! let mut tx = db.begin().await?;
+//!
+//! db.insert::<Todos>()
+//!     .value(Todos::fields().user_id(), user.id)
+//!     .value(Todos::fields().title(), "Inside a transaction".to_owned())
+//!     .exec_in(&mut tx)
+//!     .await?;
+//!
+//! tx.commit().await?;
+//! ```
+//!
+//! The transaction rolls back on drop unless committed. See [`Transaction`].
+//!
+//! ## Run raw SQL
+//!
+//! ```rust,ignore
+//! let users: Vec<Users> = db
+//!     .sql("SELECT * FROM users WHERE active = ?")
+//!     .bind(true)
+//!     .fetch_all()
+//!     .await?;
+//! ```
+//!
+//! Placeholder syntax follows the backend. See [`Db::sql`] and [`RawQuery`].
+//!
+//! # Where to find things
+//!
+//! - [`table!`] — schema introspection, code generation, and per-table options.
+//! - [`Db`] — pool plus dialect; start queries, writes, raw SQL, or transactions.
+//! - [`Column`], [`Expr`], [`Order`], [`Window`] — typed expressions and clauses.
+//! - [`Join`], [`Cte`] — joins, CTEs, and derived tables.
+//! - [`Config`] — `wormx.toml` / `sqlx.toml` settings used by the macro.
+//! - [`sql_function!`], [`operator!`] — application-defined functions and operators.
+//! - [`Dialect`], [`SqlSyntax`], [`SqlSelect`] — the driver/renderer extension seam.
+//!
+//! # Feature flags
+//!
+//! - `postgres`, `sqlite`, `mysql`, `mssql` — enable a built-in driver.
+//! - `macros` — enables [`table!`] (default).
+//! - `chrono`, `time`, `uuid`, `json`, `bigdecimal`, `rust_decimal` — forward
+//!   SQLx type support.
+//! - `runtime-tokio`, `runtime-async-std` — forward the SQLx runtime choice.
+//!
+//! SQL Server also requires the `sqlx-mssql-rs` dependency. Its `json` feature is
+//! currently a no-op upstream; see the driver documentation.
+//!
+//! # Documentation
+//!
+//! - [Root README](https://github.com/strawberyy-coconut/wormx/blob/master/README.md)
+//! - [Design notes](https://github.com/strawberyy-coconut/wormx/blob/master/docs/design/README.md)
+//! - [Compile-time introspection](https://github.com/strawberyy-coconut/wormx/blob/master/docs/design/compile-time-introspection.md)
+//! - [SQL fidelity](https://github.com/strawberyy-coconut/wormx/blob/master/docs/design/sql-fidelity.md)
+//!
+//! [compile-time introspection]: https://github.com/strawberyy-coconut/wormx/blob/master/docs/design/compile-time-introspection.md
 
 pub use sqlx;
 pub use wormx_core::{

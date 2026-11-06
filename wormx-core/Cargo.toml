@@ -6,6 +6,7 @@ rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
 description = "Core runtime, dialect traits, and typed query DSL for wormx."
+readme = "README.md"
 
 [dependencies]
 sqlx-core = { workspace = true }

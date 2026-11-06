@@ -6,6 +6,7 @@ rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
 description = "Microsoft SQL Server dialect and compile-time introspection for wormx."
+readme = "README.md"
 
 [dependencies]
 wormx-core = { path = "../../wormx-core", version = "0.2.0" }
@@ -29,7 +30,7 @@ macros = [
 chrono = ["sqlx-core/chrono", "sqlx-mssql-rs/chrono"]
 time = ["sqlx-core/time", "sqlx-mssql-rs/time"]
 uuid = ["sqlx-core/uuid", "sqlx-mssql-rs/uuid"]
-# `sqlx-mssql-rs` 0.1.0's `json` feature enables `serde_json` but not `serde`, so
+# `sqlx-mssql-rs` 0.1.x's `json` feature enables `serde_json` but not `serde`, so
 # enabling it currently fails to compile the driver. Enable forwarding once that
 # is fixed upstream.
 json = []
