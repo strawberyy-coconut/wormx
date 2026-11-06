@@ -76,6 +76,20 @@ impl<D: Dialect + Clone, T: Table> Upsert<D, T> {
         self
     }
 
+    /// A column to update with the incoming row's value when it already
+    /// exists.
+    ///
+    /// This is the portable spelling of `excluded.column`, `VALUES(column)`,
+    /// and `source.column`.
+    pub fn update_from_input<C>(mut self, column: Column<C>) -> Self
+    where
+        C: 'static,
+    {
+        self.assignments
+            .push((column.name(), Expr::input(column).erase()));
+        self
+    }
+
     /// Executes the statement.
     pub async fn exec(mut self) -> Result<<D::DB as Database>::QueryResult>
     where

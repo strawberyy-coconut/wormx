@@ -202,6 +202,10 @@ pub fn render_expr_kind<D: SqlDialect>(
             writer.write_group_end();
             Ok(())
         }
+        ExprKind::InputColumn(column) => {
+            writer.write_input_column(&column.column);
+            Ok(())
+        }
         ExprKind::Custom(node) => node.render(writer),
     }
 }

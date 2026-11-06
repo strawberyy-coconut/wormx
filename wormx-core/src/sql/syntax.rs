@@ -147,6 +147,20 @@ pub trait SqlSyntax: Dialect + 'static + Sized + Send + Sync {
         Self::write_returning(writer);
     }
 
+    /// Writes a reference to the value supplied for a column by the incoming
+    /// row of an upsert.
+    ///
+    /// The default is PostgreSQL/SQLite's `excluded.column`. MySQL overrides
+    /// it with `VALUES(column)`, and SQL Server uses `source.column`.
+    fn write_input_column(column: &str, writer: &mut SqlWriter<Self>)
+    where
+        Self: Dialect,
+    {
+        writer.push_ident("excluded");
+        writer.write_identifier_separator();
+        writer.push_ident(column);
+    }
+
     fn write_on_conflict(writer: &mut SqlWriter<Self>)
     where
         Self: Dialect,

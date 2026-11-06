@@ -197,4 +197,95 @@ mod tests {
             1
         );
     }
+
+    #[tokio::test]
+    async fn batch_writes_rows() {
+        let pool = sqlx::PgPool::connect(env!("DATABASE_URL"))
+            .await
+            .expect("connect to Postgres fixture database");
+        let db = wormx::Db::new(pool, wormx::PostgresDialect);
+
+        db.delete_many::<WormxUsers>(WormxUsers::fields().name().like("Batch%"))
+            .exec()
+            .await
+            .expect("clean batch rows");
+
+        let inserted = db
+            .insert_many::<WormxUsers>()
+            .row(|row| {
+                row.value(WormxUsers::fields().name(), "Batch Alice")
+                    .value(WormxUsers::fields().email(), None::<String>)
+                    .value(WormxUsers::fields().active(), true)
+            })
+            .row(|row| {
+                row.value(WormxUsers::fields().name(), "Batch Bob")
+                    .value(WormxUsers::fields().email(), None::<String>)
+                    .value(WormxUsers::fields().active(), false)
+            })
+            .exec_returning()
+            .await
+            .expect("batch insert");
+        assert_eq!(inserted.len(), 2);
+        let ids = inserted.iter().map(|user| user.id).collect::<Vec<_>>();
+
+        let upserted = db
+            .upsert_many::<WormxUsers>()
+            .row(|row| {
+                row.value(WormxUsers::fields().id(), ids[0])
+                    .value(WormxUsers::fields().name(), "Batch Alice 2")
+                    .value(WormxUsers::fields().email(), None::<String>)
+                    .value(WormxUsers::fields().active(), true)
+            })
+            .row(|row| {
+                row.value(WormxUsers::fields().id(), ids[1])
+                    .value(WormxUsers::fields().name(), "Batch Bob 2")
+                    .value(WormxUsers::fields().email(), None::<String>)
+                    .value(WormxUsers::fields().active(), true)
+            })
+            .conflict_on(WormxUsers::fields().id())
+            .update_from_input(WormxUsers::fields().name())
+            .update_from_input(WormxUsers::fields().active())
+            .exec_returning()
+            .await
+            .expect("batch upsert");
+        assert_eq!(upserted.len(), 2);
+
+        db.update_many::<WormxUsers>()
+            .key(WormxUsers::fields().id())
+            .row(|row| {
+                row.key(ids[0])
+                    .value(WormxUsers::fields().name(), "Batch Alice 3")
+            })
+            .row(|row| {
+                row.key(ids[1])
+                    .value(WormxUsers::fields().name(), "Batch Bob 3")
+            })
+            .exec()
+            .await
+            .expect("batch update");
+
+        let users = db
+            .query(WormxUsers::all())
+            .filter(WormxUsers::fields().name().like("Batch%"))
+            .order_by(WormxUsers::fields().id().asc())
+            .exec()
+            .await
+            .expect("load batch rows");
+        assert_eq!(users.len(), 2);
+        assert_eq!(users[0].name, "Batch Alice 3");
+        assert_eq!(users[1].name, "Batch Bob 3");
+
+        db.delete_many::<WormxUsers>(WormxUsers::fields().id().in_list(ids.clone()))
+            .exec()
+            .await
+            .expect("batch delete");
+
+        let remaining = db
+            .query(WormxUsers::all())
+            .filter(WormxUsers::fields().id().in_list(ids))
+            .count()
+            .await
+            .expect("count remaining batch rows");
+        assert_eq!(remaining, 0);
+    }
 }

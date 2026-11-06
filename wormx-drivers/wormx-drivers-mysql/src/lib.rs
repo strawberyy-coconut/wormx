@@ -3,7 +3,7 @@
 use sqlx_core::error::{Error, Result};
 use wormx_core::{
     Dialect, SqlSyntax, SqlWriter, SupportsFullTextSearch, SupportsJson, SupportsUpsert,
-    UpsertPlan, UpsertRenderer,
+    UpsertManyPlan, UpsertPlan, UpsertRenderer, write_values_rows,
 };
 
 /// The MySQL dialect marker.
@@ -48,6 +48,13 @@ impl SqlSyntax for MySqlDialect {
     fn write_insert_default(writer: &mut SqlWriter<Self>) {
         writer.push(" () VALUES ()");
     }
+
+    fn write_input_column(column: &str, writer: &mut SqlWriter<Self>) {
+        writer.push("VALUES");
+        writer.write_group_start();
+        writer.push_ident(column);
+        writer.write_group_end();
+    }
 }
 
 /// MySQL upsert renderer using `INSERT ... ON DUPLICATE KEY UPDATE`.
@@ -86,6 +93,45 @@ impl UpsertRenderer<MySqlDialect> for MySqlUpsert {
             value.render(writer)?;
         }
         writer.write_group_end();
+
+        writer.push(" ON DUPLICATE KEY UPDATE ");
+        for (index, (column, value)) in plan.assignments.iter_mut().enumerate() {
+            if index > 0 {
+                writer.write_comma();
+            }
+            writer.push_ident(column);
+            writer.write_equals();
+            value.render(writer)?;
+        }
+
+        Ok(())
+    }
+
+    fn write_many(
+        &self,
+        plan: UpsertManyPlan<'_, MySqlDialect>,
+        writer: &mut SqlWriter<MySqlDialect>,
+    ) -> Result<()> {
+        if plan.assignments.is_empty() {
+            return Err(Error::InvalidArgument(
+                "UPSERT requires at least one .update(...) or .update_from_input(...) assignment for MySQL"
+                    .to_owned(),
+            ));
+        }
+
+        writer.write_insert();
+        push_table(writer, plan.table.def);
+
+        writer.write_group_start();
+        for (index, column) in plan.columns.iter().enumerate() {
+            if index > 0 {
+                writer.write_comma();
+            }
+            writer.push_ident(column);
+        }
+        writer.write_group_end();
+
+        write_values_rows(writer, plan.rows)?;
 
         writer.push(" ON DUPLICATE KEY UPDATE ");
         for (index, (column, value)) in plan.assignments.iter_mut().enumerate() {
@@ -344,9 +390,41 @@ pub use macros::MYSQL;
 
 #[cfg(test)]
 mod tests {
-    use wormx_core::{SqlSyntax, SqlWriter};
+    use wormx_core::{
+        Column, ColumnDef, Expr, InsertManyPlan, InsertRenderer, SqlInsert, SqlSyntax, SqlWriter,
+        TableDef, TableSource, UpsertManyPlan, UpsertRenderer,
+    };
 
-    use super::MySqlDialect;
+    use super::{MySqlDialect, MySqlUpsert};
+
+    static COLUMNS: &[ColumnDef] = &[
+        ColumnDef {
+            name: "id",
+            sql_type: "bigint",
+            nullable: false,
+            primary_key: true,
+            has_default: false,
+            identity: false,
+            generated: false,
+        },
+        ColumnDef {
+            name: "name",
+            sql_type: "varchar",
+            nullable: false,
+            primary_key: false,
+            has_default: false,
+            identity: false,
+            generated: false,
+        },
+    ];
+    static PRIMARY_KEY: &[&str] = &["id"];
+    static TABLE: TableDef = TableDef {
+        name: "users",
+        schema: None,
+        columns: COLUMNS,
+        primary_key: PRIMARY_KEY,
+        relations: &[],
+    };
 
     #[test]
     fn empty_insert_uses_mysql_syntax() {
@@ -354,6 +432,68 @@ mod tests {
         <MySqlDialect as SqlSyntax>::write_insert_default(&mut writer);
         let (sql, _) = writer.finish();
         assert_eq!(sql, " () VALUES ()");
+    }
+
+    #[test]
+    fn renders_multi_row_insert() {
+        let columns = ["id", "name"];
+        let mut rows = vec![
+            vec![Expr::<(), MySqlDialect>::raw("?"), Expr::raw("?")],
+            vec![Expr::raw("?"), Expr::raw("?")],
+        ];
+
+        let mut writer = SqlWriter::new(MySqlDialect);
+        SqlInsert
+            .write_many(
+                InsertManyPlan {
+                    table: &TABLE,
+                    columns: &columns,
+                    rows: &mut rows,
+                    returning: false,
+                },
+                &mut writer,
+            )
+            .expect("render batch insert");
+        let (sql, _) = writer.finish();
+
+        assert_eq!(
+            sql,
+            "INSERT INTO `users`(`id`, `name`) VALUES (?, ?), (?, ?)"
+        );
+    }
+
+    #[test]
+    fn renders_multi_row_upsert_with_input_column() {
+        let columns = ["id", "name"];
+        let conflict_columns = ["id"];
+        let mut rows = vec![
+            vec![Expr::<(), MySqlDialect>::raw("?"), Expr::raw("?")],
+            vec![Expr::raw("?"), Expr::raw("?")],
+        ];
+        let mut assignments = vec![(
+            "name",
+            Expr::<(), MySqlDialect>::input(Column::new(None, "users", "name")),
+        )];
+
+        let plan = UpsertManyPlan {
+            table: TableSource::new(&TABLE, None),
+            columns: &columns,
+            rows: &mut rows,
+            conflict_columns: &conflict_columns,
+            assignments: &mut assignments,
+            returning: false,
+        };
+
+        let mut writer = SqlWriter::new(MySqlDialect);
+        MySqlUpsert
+            .write_many(plan, &mut writer)
+            .expect("render batch upsert");
+        let (sql, _) = writer.finish();
+
+        assert_eq!(
+            sql,
+            "INSERT INTO `users`(`id`, `name`) VALUES (?, ?), (?, ?) ON DUPLICATE KEY UPDATE `name` = VALUES(`name`)"
+        );
     }
 
     #[test]

@@ -28,7 +28,10 @@ pub use config::{
 };
 pub use exec::{Db, RawQuery, Transaction};
 pub use plan::deferred::Deferred;
-pub use plan::dml::{Delete, Insert, Update, Upsert};
+pub use plan::dml::{
+    Delete, Insert, InsertMany, RowBuilder, Update, UpdateMany, UpdateManyStart, UpdateRow, Upsert,
+    UpsertMany,
+};
 pub use plan::expr::{
     BindValue, Case, ColumnExpr, ColumnRef, CustomNode, Expr, ExprKind, IntoExpr, LogicalOp, Order,
     Window, coalesce, count_star, dense_rank, rank, row_number,
@@ -37,15 +40,16 @@ pub use plan::include::Include;
 pub use plan::join::{Join, JoinKind, JoinSource, TableSource};
 pub use plan::query::{
     Column, ColumnSelect, CountPlan, CountProjection, Cte, DeletePlan, DeleteRenderer, Filtered,
-    Get, InsertPlan, InsertRenderer, IntoSelect, ProjectedSelect, Projection, ProjectionVisitor,
-    Query, Scalar, Select, SelectPlan, SelectRenderer, StarProjection, Subquery, UpdatePlan,
-    UpdateRenderer, UpsertPlan, UpsertRenderer,
+    Get, InsertManyPlan, InsertPlan, InsertRenderer, IntoSelect, ProjectedSelect, Projection,
+    ProjectionVisitor, Query, Scalar, Select, SelectPlan, SelectRenderer, StarProjection, Subquery,
+    UpdatePlan, UpdateRenderer, UpsertManyPlan, UpsertPlan, UpsertRenderer,
 };
 pub use plan::relation::{BelongsTo, BelongsToRef, HasMany, HasManyRef, OptionalBelongsToRef};
 pub use schema::{ColumnDef, RelationDef, RelationKind, Table, TableDef, TableRef, TableRefError};
 pub use sql::render::{
     SqlDelete, SqlInsert, SqlSelect, SqlUpdate, SqlUpsert, write_ctes, write_filters,
     write_from_filters, write_groups_having, write_orders, write_projection, write_tail,
+    write_values_rows,
 };
 pub use sql::{
     Dialect, Fixity, Function, FunctionArgs, Operator, OperatorExpr, ReturningOp,

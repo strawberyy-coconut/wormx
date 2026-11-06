@@ -4,7 +4,7 @@ use sqlx_core::error::{Error, Result};
 use wormx_core::{
     Delete, Dialect, ProjectedSelect, Projection, ReturningOp, ReturningPosition, Select,
     SqlSyntax, SqlWriter, SupportsFullJoin, SupportsFullTextSearch, SupportsReturning,
-    SupportsUpsert, Table, TableSource, Update, Upsert, UpsertPlan, UpsertRenderer,
+    SupportsUpsert, Table, TableSource, Update, Upsert, UpsertManyPlan, UpsertPlan, UpsertRenderer,
 };
 
 /// The Microsoft SQL Server dialect marker.
@@ -63,6 +63,12 @@ impl SqlSyntax for MssqlDialect {
                 writer.push(" OUTPUT INSERTED.*");
             }
         }
+    }
+
+    fn write_input_column(column: &str, writer: &mut SqlWriter<Self>) {
+        writer.push_ident("source");
+        writer.write_identifier_separator();
+        writer.push_ident(column);
     }
 
     fn write_limit_offset(
@@ -284,21 +290,94 @@ impl UpsertRenderer<MssqlDialect> for MssqlUpsert {
             }
         }
 
-        writer.push(" WHEN NOT MATCHED THEN INSERT (");
+        write_insert_branch(writer, plan.columns, plan.table.def);
+
+        if plan.returning {
+            writer.write_returning_clause(ReturningOp::Upsert);
+        }
+        writer.push(";");
+
+        Ok(())
+    }
+
+    fn write_many(
+        &self,
+        plan: UpsertManyPlan<'_, MssqlDialect>,
+        writer: &mut SqlWriter<MssqlDialect>,
+    ) -> Result<()> {
+        if plan.rows.is_empty() {
+            return Err(Error::InvalidArgument(
+                "batch upsert requires at least one row".to_owned(),
+            ));
+        }
+        if plan.conflict_columns.is_empty() {
+            return Err(Error::InvalidArgument(
+                "UPSERT requires at least one conflict column; call .conflict_on(...)".to_owned(),
+            ));
+        }
+
+        writer.push("MERGE INTO ");
+        push_table(writer, plan.table.def);
+
+        writer.push(" WITH (HOLDLOCK");
+        if let Some(suffix) = plan.table.suffix
+            && !suffix.trim().is_empty()
+            && !suffix.to_ascii_uppercase().contains("HOLDLOCK")
+        {
+            writer.push(", ");
+            writer.push(suffix);
+        }
+        writer.push(") AS ");
+        writer.push_ident("target");
+
+        writer.push(" USING (VALUES ");
+        for (row_index, row) in plan.rows.iter_mut().enumerate() {
+            if row_index > 0 {
+                writer.write_comma();
+            }
+            writer.write_group_start();
+            for (value_index, value) in row.iter_mut().enumerate() {
+                if value_index > 0 {
+                    writer.write_comma();
+                }
+                value.render(writer)?;
+            }
+            writer.write_group_end();
+        }
+        writer.push(") AS ");
+        writer.push_ident("source");
+        writer.write_group_start();
         for (index, column) in plan.columns.iter().enumerate() {
             if index > 0 {
                 writer.write_comma();
             }
             writer.push_ident(column);
         }
-        writer.push(") VALUES (");
-        for (index, column) in plan.columns.iter().enumerate() {
+        writer.write_group_end();
+
+        writer.push(" ON ");
+        for (index, column) in plan.conflict_columns.iter().enumerate() {
             if index > 0 {
-                writer.write_comma();
+                writer.push(" AND ");
             }
+            push_qualified(writer, "target", column);
+            writer.write_equals();
             push_qualified(writer, "source", column);
         }
-        writer.push(")");
+
+        if !plan.assignments.is_empty() {
+            writer.push(" WHEN MATCHED THEN UPDATE SET ");
+            for (index, (column, value)) in plan.assignments.iter_mut().enumerate() {
+                if index > 0 {
+                    writer.write_comma();
+                }
+                writer.push_ident(column);
+                writer.write_equals();
+                value.render(writer)?;
+            }
+        }
+
+        write_insert_branch(writer, plan.columns, plan.table.def);
 
         if plan.returning {
             writer.write_returning_clause(ReturningOp::Upsert);
@@ -321,6 +400,50 @@ fn push_qualified(writer: &mut SqlWriter<MssqlDialect>, alias: &str, column: &st
     writer.push_ident(alias);
     writer.write_identifier_separator();
     writer.push_ident(column);
+}
+
+fn insertable_columns(columns: &[&'static str], table: &wormx_core::TableDef) -> Vec<&'static str> {
+    columns
+        .iter()
+        .copied()
+        .filter(|column| {
+            table
+                .columns
+                .iter()
+                .find(|definition| definition.name == *column)
+                .map(|definition| !definition.identity && !definition.generated)
+                .unwrap_or(true)
+        })
+        .collect()
+}
+
+fn write_insert_branch(
+    writer: &mut SqlWriter<MssqlDialect>,
+    columns: &[&'static str],
+    table: &wormx_core::TableDef,
+) {
+    let insert_columns = insertable_columns(columns, table);
+    writer.push(" WHEN NOT MATCHED THEN INSERT ");
+    if insert_columns.is_empty() {
+        writer.push("DEFAULT VALUES");
+        return;
+    }
+
+    writer.push("(");
+    for (index, column) in insert_columns.iter().enumerate() {
+        if index > 0 {
+            writer.write_comma();
+        }
+        writer.push_ident(column);
+    }
+    writer.push(") VALUES (");
+    for (index, column) in insert_columns.iter().enumerate() {
+        if index > 0 {
+            writer.write_comma();
+        }
+        push_qualified(writer, "source", column);
+    }
+    writer.push(")");
 }
 
 impl SupportsFullJoin for MssqlDialect {}
@@ -586,9 +709,9 @@ pub use macros::MSSQL;
 mod tests {
     use super::*;
     use wormx_core::{
-        ColumnDef, DeletePlan, DeleteRenderer, Expr, InsertPlan, InsertRenderer, SelectRenderer,
-        SqlDelete, SqlInsert, SqlSelect, SqlUpdate, StarProjection, TableDef, TableSource,
-        UpdatePlan, UpdateRenderer, UpsertRenderer,
+        Column, ColumnDef, DeletePlan, DeleteRenderer, Expr, InsertManyPlan, InsertPlan,
+        InsertRenderer, SelectRenderer, SqlDelete, SqlInsert, SqlSelect, SqlUpdate, StarProjection,
+        TableDef, TableSource, UpdatePlan, UpdateRenderer, UpsertManyPlan, UpsertRenderer,
     };
 
     static COLUMNS: &[ColumnDef] = &[
@@ -670,9 +793,7 @@ mod tests {
             "{sql}"
         );
         assert!(
-            sql.ends_with(
-                "WHEN NOT MATCHED THEN INSERT ([id], [name]) VALUES ([source].[id], [source].[name]);"
-            ),
+            sql.ends_with("WHEN NOT MATCHED THEN INSERT ([name]) VALUES ([source].[name]);"),
             "{sql}"
         );
     }
@@ -931,5 +1052,78 @@ mod tests {
             sql.starts_with("MERGE INTO [dbo].[wormx_users] WITH (HOLDLOCK, ROWLOCK)"),
             "{sql}"
         );
+    }
+
+    #[test]
+    fn renders_multi_row_insert_with_output() {
+        let columns = ["id", "name"];
+        let mut rows = vec![
+            vec![Expr::<(), MssqlDialect>::raw("?"), Expr::raw("?")],
+            vec![Expr::raw("?"), Expr::raw("?")],
+        ];
+
+        let mut writer = SqlWriter::new(MssqlDialect);
+        SqlInsert
+            .write_many(
+                InsertManyPlan {
+                    table: &TABLE,
+                    columns: &columns,
+                    rows: &mut rows,
+                    returning: true,
+                },
+                &mut writer,
+            )
+            .expect("render batch insert");
+        let (sql, _args) = writer.finish();
+
+        assert_eq!(
+            sql,
+            "INSERT INTO [dbo].[wormx_users]([id], [name]) OUTPUT INSERTED.* VALUES (?, ?), (?, ?)"
+        );
+    }
+
+    #[test]
+    fn renders_multi_row_merge_with_input_column() {
+        let columns = ["id", "name"];
+        let conflict_columns = ["id"];
+        let mut rows = vec![
+            vec![Expr::<(), MssqlDialect>::raw("?"), Expr::raw("?")],
+            vec![Expr::raw("?"), Expr::raw("?")],
+        ];
+        let mut assignments = vec![(
+            "name",
+            Expr::<(), MssqlDialect>::input(Column::new(Some("dbo"), "wormx_users", "name")),
+        )];
+
+        let plan = UpsertManyPlan {
+            table: TableSource::new(&TABLE, None),
+            columns: &columns,
+            rows: &mut rows,
+            conflict_columns: &conflict_columns,
+            assignments: &mut assignments,
+            returning: true,
+        };
+
+        let mut writer = SqlWriter::new(MssqlDialect);
+        MssqlUpsert
+            .write_many(plan, &mut writer)
+            .expect("render batch merge");
+        let (sql, _args) = writer.finish();
+
+        assert!(
+            sql.starts_with(
+                "MERGE INTO [dbo].[wormx_users] WITH (HOLDLOCK) AS [target] USING (VALUES (?, ?), (?, ?)) AS [source]([id], [name]) ON [target].[id] = [source].[id]"
+            ),
+            "{sql}"
+        );
+        assert!(
+            sql.contains("WHEN MATCHED THEN UPDATE SET [name] = [source].[name]"),
+            "{sql}"
+        );
+        assert!(
+            sql.contains("WHEN NOT MATCHED THEN INSERT ([name]) VALUES ([source].[name])"),
+            "{sql}"
+        );
+        assert!(sql.ends_with("OUTPUT INSERTED.*;"), "{sql}");
     }
 }

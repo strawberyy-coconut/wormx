@@ -3,9 +3,9 @@ use sqlx_core::error::{Error, Result};
 use crate::plan::expr::{ColumnRef, Expr, ExprKind, Order};
 use crate::plan::join::{Join, JoinSource, TableSource};
 use crate::plan::query::{
-    CountPlan, CountProjection, Cte, DeletePlan, DeleteRenderer, InsertPlan, InsertRenderer,
-    Projection, ProjectionVisitor, SelectPlan, SelectRenderer, UpdatePlan, UpdateRenderer,
-    UpsertPlan, UpsertRenderer,
+    CountPlan, CountProjection, Cte, DeletePlan, DeleteRenderer, InsertManyPlan, InsertPlan,
+    InsertRenderer, Projection, ProjectionVisitor, SelectPlan, SelectRenderer, UpdatePlan,
+    UpdateRenderer, UpsertManyPlan, UpsertPlan, UpsertRenderer,
 };
 
 use super::expr::{render_column_ref, render_expr_kind, render_order};
@@ -211,6 +211,36 @@ pub fn write_ctes<D: SqlDialect>(writer: &mut Writer<D>, ctes: &mut [Cte<D>]) ->
 #[derive(Debug, Clone, Copy, Default)]
 pub struct SqlInsert;
 
+/// Writes `VALUES` followed by one parenthesized row per entry.
+///
+/// The first opening parenthesis comes from the dialect's `write_values` hook.
+pub fn write_values_rows<D: SqlDialect>(
+    writer: &mut SqlWriter<D>,
+    rows: &mut [Vec<Expr<(), D>>],
+) -> Result<()> {
+    if rows.is_empty() {
+        return Err(Error::InvalidArgument(
+            "batch operation requires at least one row".to_owned(),
+        ));
+    }
+
+    writer.write_values();
+    for (index, row) in rows.iter_mut().enumerate() {
+        if index > 0 {
+            writer.write_comma();
+            writer.write_group_start();
+        }
+        for (value_index, value) in row.iter_mut().enumerate() {
+            if value_index > 0 {
+                writer.write_comma();
+            }
+            value.render(writer)?;
+        }
+        writer.write_group_end();
+    }
+    Ok(())
+}
+
 impl<D: SqlDialect> InsertRenderer<D> for SqlInsert {
     fn write(&self, plan: InsertPlan<'_, D>, writer: &mut SqlWriter<D>) -> Result<()> {
         writer.write_insert();
@@ -248,6 +278,54 @@ impl<D: SqlDialect> InsertRenderer<D> for SqlInsert {
                 value.render(writer)?;
             }
             writer.write_group_end();
+        }
+
+        if plan.returning && returning_position != Some(ReturningPosition::BeforeValues) {
+            writer.write_returning_clause(ReturningOp::Insert);
+        }
+
+        Ok(())
+    }
+
+    fn write_many(&self, plan: InsertManyPlan<'_, D>, writer: &mut SqlWriter<D>) -> Result<()> {
+        if plan.rows.is_empty() {
+            return Err(Error::InvalidArgument(
+                "batch insert requires at least one row".to_owned(),
+            ));
+        }
+
+        writer.write_insert();
+        push_table(writer, plan.table.schema, plan.table.name);
+
+        let returning_position = plan
+            .returning
+            .then(|| writer.returning_position(ReturningOp::Insert));
+
+        if plan.columns.is_empty() {
+            if plan.rows.len() > 1 {
+                return Err(Error::InvalidArgument(
+                    "a batch with more than one row requires at least one column".to_owned(),
+                ));
+            }
+            if returning_position == Some(ReturningPosition::BeforeValues) {
+                writer.write_returning_clause(ReturningOp::Insert);
+            }
+            writer.write_insert_default();
+        } else {
+            writer.write_group_start();
+            for (index, column) in plan.columns.iter().enumerate() {
+                if index > 0 {
+                    writer.write_comma();
+                }
+                writer.push_ident(column);
+            }
+            writer.write_group_end();
+
+            if returning_position == Some(ReturningPosition::BeforeValues) {
+                writer.write_returning_clause(ReturningOp::Insert);
+            }
+
+            write_values_rows(writer, plan.rows)?;
         }
 
         if plan.returning && returning_position != Some(ReturningPosition::BeforeValues) {
@@ -367,6 +445,64 @@ impl<D: SqlDialect> UpsertRenderer<D> for SqlUpsert {
             value.render(writer)?;
         }
         writer.write_group_end();
+
+        writer.write_on_conflict();
+        writer.write_group_start();
+        for (index, column) in plan.conflict_columns.iter().enumerate() {
+            if index > 0 {
+                writer.write_comma();
+            }
+            writer.push_ident(column);
+        }
+        writer.write_group_end();
+        writer.write_do_update_set();
+
+        for (index, (column, value)) in plan.assignments.iter_mut().enumerate() {
+            if index > 0 {
+                writer.write_comma();
+            }
+            writer.push_ident(column);
+            writer.write_equals();
+            value.render(writer)?;
+        }
+
+        if plan.returning {
+            writer.write_returning_clause(ReturningOp::Upsert);
+        }
+
+        Ok(())
+    }
+
+    fn write_many(&self, plan: UpsertManyPlan<'_, D>, writer: &mut SqlWriter<D>) -> Result<()> {
+        if plan.rows.is_empty() {
+            return Err(Error::InvalidArgument(
+                "batch upsert requires at least one row".to_owned(),
+            ));
+        }
+        if plan.conflict_columns.is_empty() {
+            return Err(Error::InvalidArgument(
+                "UPSERT requires at least one conflict column; call .conflict_on(...)".to_owned(),
+            ));
+        }
+        if plan.assignments.is_empty() {
+            return Err(Error::InvalidArgument(
+                "UPSERT requires at least one .update(...) or .update_from_input(...) assignment"
+                    .to_owned(),
+            ));
+        }
+
+        writer.write_insert();
+        plan.table.render(writer);
+        writer.write_group_start();
+        for (index, column) in plan.columns.iter().enumerate() {
+            if index > 0 {
+                writer.write_comma();
+            }
+            writer.push_ident(column);
+        }
+        writer.write_group_end();
+
+        write_values_rows(writer, plan.rows)?;
 
         writer.write_on_conflict();
         writer.write_group_start();

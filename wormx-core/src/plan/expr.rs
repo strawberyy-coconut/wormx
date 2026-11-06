@@ -13,7 +13,7 @@ use sqlx_core::types::Type;
 use super::backend::Dialect;
 use super::command::Writer;
 
-use super::query::Subquery;
+use super::query::{Column, Subquery};
 
 /// A qualified column reference.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -155,6 +155,12 @@ pub enum ExprKind<D: Dialect> {
         /// so it must be a constant, never user input.
         to: &'static str,
     },
+    /// The value supplied for a column by the incoming row of an upsert.
+    ///
+    /// SQL renders this as `excluded.column` (PostgreSQL/SQLite),
+    /// `VALUES(column)` (MySQL), or `source.column` (SQL Server). It is only
+    /// meaningful inside an upsert's update clause.
+    InputColumn(ColumnRef),
     Custom(Box<dyn CustomNode<D>>),
 }
 
@@ -359,6 +365,14 @@ impl<T, D: Dialect> Expr<T, D> {
             branches: Vec::new(),
             _marker: PhantomData,
         }
+    }
+
+    /// Refers to the value supplied for `column` by the incoming upsert row.
+    ///
+    /// The dialect renders this as `excluded.column`, `VALUES(column)`, or
+    /// `source.column`. It is only meaningful in an upsert's update clause.
+    pub fn input(column: Column<T>) -> Self {
+        Self::from_kind(ExprKind::InputColumn(column.column_ref()))
     }
 
     /// Casts this expression to the SQL type named by `to`.

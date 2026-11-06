@@ -150,6 +150,8 @@ Implemented:
 - `COUNT` and raw SQL escape hatches with `db.sql(...).bind(...)`.
 - Insert, update, delete, and upsert builders, plus transactions and
   `RETURNING` where the dialect supports it.
+- Batch writes: `insert_many`, `upsert_many`, per-row `update_many`, and
+  `delete_many`; each batch is one statement.
 - Grouping and `HAVING`.
 - CTEs, window functions, and arbitrary joins over tables, CTEs, or derived tables.
 - Runtime traits for dialect capabilities and typed expressions, including the
@@ -278,6 +280,73 @@ SQL Server's `MERGE`; MySQL ignores it because `ON DUPLICATE KEY` chooses the
 unique index itself. `exec_returning` remains dialect-gated: SQL Server emits
 `OUTPUT INSERTED.*` after the final `WHEN` clause, and MySQL does not support
 returned rows.
+
+### Batch writes
+
+Batch builders group rows into one statement. `insert_many` and `upsert_many`
+require the same columns on every row:
+
+```rust
+let inserted = db
+    .insert_many::<Users>()
+    .row(|row| row
+        .value(Users::fields().name(), "Alice".to_owned())
+        .value(Users::fields().active(), true))
+    .row(|row| row
+        .value(Users::fields().name(), "Bob".to_owned())
+        .value(Users::fields().active(), false))
+    .exec_returning()
+    .await?;
+```
+
+```rust
+db.upsert_many::<Users>()
+    .row(|row| row
+        .value(Users::fields().id(), 1_i64)
+        .value(Users::fields().name(), "Alice".to_owned()))
+    .row(|row| row
+        .value(Users::fields().id(), 2_i64)
+        .value(Users::fields().name(), "Bob".to_owned()))
+    .conflict_on(Users::fields().id())
+    .update_from_input(Users::fields().name())
+    .exec()
+    .await?;
+```
+
+`update_from_input(column)` sets the existing row's column from the incoming
+row. It renders as `excluded.column` on PostgreSQL/SQLite, `VALUES(column)` on
+MySQL, and `source.column` on SQL Server. The same method is available on
+single-row `upsert`.
+
+Per-row updates use one key column and a `CASE` expression for each changed
+column. Rows that omit a column leave its existing value unchanged:
+
+```rust
+db.update_many::<Users>()
+    .key(Users::fields().id())
+    .row(|row| row
+        .key(1_i64)
+        .value(Users::fields().name(), "Alice".to_owned())
+        .value(Users::fields().active(), true))
+    .row(|row| row
+        .key(2_i64)
+        .value(Users::fields().name(), "Bob".to_owned()))
+    .exec()
+    .await?;
+```
+
+Bulk deletes use the usual filter DSL:
+
+```rust
+db.delete_many::<Users>(Users::fields().id().in_list([1_i64, 2_i64]))
+    .exec()
+    .await?;
+```
+
+Batch builders send one statement, so keep the batch within the database's
+bind-parameter limit. `update_many` currently supports a single key column. On
+SQL Server, `MERGE` omits identity and generated columns from its insert
+branch, so a new row receives a generated identity value.
 
 Transactions use `begin`, `exec_in`, and `commit`/`rollback`:
 
@@ -727,6 +796,7 @@ Supported directly:
 - `CASE WHEN ... THEN ... ELSE ... END` and `CAST(expr AS type)`
 - CTEs (`.with(...)`) and window functions (`.over(...)`)
 - insert, update, delete, and upsert builders
+- multi-row `INSERT` and `UPSERT`, plus per-row `UPDATE ... CASE` batches
 - `RETURNING` on dialects that support it (`exec_returning`)
 - driver-specific `LIMIT/OFFSET` spelling, plus opaque source suffixes and tails
   for dialect extensions such as SQL Server hints and `OPTION (...)`

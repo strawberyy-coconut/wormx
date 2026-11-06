@@ -67,6 +67,10 @@ impl<D: SqlDialect> Writer<D> {
         dialect.write_returning_clause(op, self);
     }
 
+    pub fn write_input_column(&mut self, column: &str) {
+        D::write_input_column(column, self);
+    }
+
     pub fn write_on_conflict(&mut self) {
         D::write_on_conflict(self);
     }

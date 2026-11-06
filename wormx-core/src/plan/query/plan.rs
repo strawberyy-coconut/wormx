@@ -4,7 +4,7 @@
 //! [`crate::sql::render`]; a renderer for another query language can implement
 //! the same traits.
 
-use sqlx_core::error::Result;
+use sqlx_core::error::{Error, Result};
 
 use crate::plan::expr::{Expr, Order};
 use crate::plan::join::{Join, TableSource};
@@ -81,6 +81,14 @@ pub struct InsertPlan<'a, D: Dialect> {
     pub returning: bool,
 }
 
+/// All inputs needed to render a multi-row `INSERT` operation.
+pub struct InsertManyPlan<'a, D: Dialect> {
+    pub table: &'static TableDef,
+    pub columns: &'a [&'static str],
+    pub rows: &'a mut [Vec<Expr<(), D>>],
+    pub returning: bool,
+}
+
 /// All inputs needed to render an `UPDATE` operation.
 pub struct UpdatePlan<'a, D: Dialect> {
     /// The target table, including optional hints.
@@ -109,11 +117,31 @@ pub struct UpsertPlan<'a, D: Dialect> {
     pub returning: bool,
 }
 
+/// All inputs needed to render a multi-row `UPSERT`/`MERGE` operation.
+pub struct UpsertManyPlan<'a, D: Dialect> {
+    /// The target table, including optional hints.
+    pub table: TableSource,
+    pub columns: &'a [&'static str],
+    pub rows: &'a mut [Vec<Expr<(), D>>],
+    pub conflict_columns: &'a [&'static str],
+    pub assignments: &'a mut [(&'static str, Expr<(), D>)],
+    pub returning: bool,
+}
+
 /// Renders an `INSERT` operation.
 ///
 /// A dialect chooses this renderer with [`Dialect::Insert`].
 pub trait InsertRenderer<D: Dialect>: Default {
     fn write(&self, plan: InsertPlan<'_, D>, writer: &mut Writer<D>) -> Result<()>;
+
+    /// Renders a multi-row `INSERT`.
+    ///
+    /// The default rejects batch inserts so existing renderers keep compiling.
+    fn write_many(&self, _plan: InsertManyPlan<'_, D>, _writer: &mut Writer<D>) -> Result<()> {
+        Err(Error::InvalidArgument(
+            "this dialect does not support multi-row inserts".to_owned(),
+        ))
+    }
 }
 
 /// Renders an `UPDATE` operation.
@@ -135,4 +163,13 @@ pub trait DeleteRenderer<D: Dialect>: Default {
 /// A dialect chooses this renderer with [`Dialect::Upsert`].
 pub trait UpsertRenderer<D: Dialect>: Default {
     fn write(&self, plan: UpsertPlan<'_, D>, writer: &mut Writer<D>) -> Result<()>;
+
+    /// Renders a multi-row `UPSERT`/`MERGE`.
+    ///
+    /// The default rejects batch upserts so existing renderers keep compiling.
+    fn write_many(&self, _plan: UpsertManyPlan<'_, D>, _writer: &mut Writer<D>) -> Result<()> {
+        Err(Error::InvalidArgument(
+            "this dialect does not support multi-row upserts".to_owned(),
+        ))
+    }
 }

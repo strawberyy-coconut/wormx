@@ -1477,4 +1477,168 @@ mod tests {
         let (command, _args) = query.render().expect("render with custom dialect");
         assert_eq!(command, "MATCH (n) WHERE 1 filter(s) RETURN id");
     }
+
+    #[tokio::test]
+    async fn batch_insert_upsert_update_and_delete() {
+        let pool = sqlx::SqlitePool::connect(env!("DATABASE_URL"))
+            .await
+            .expect("connect to fixture database");
+        let db = wormx::Db::new(pool, wormx::SqliteDialect);
+
+        let ids = [80_i64, 81, 82];
+        db.delete_many::<Users>(Users::fields().id().in_list(ids))
+            .exec()
+            .await
+            .expect("clean prior rows");
+
+        let inserted = db
+            .insert_many::<Users>()
+            .row(|row| {
+                row.value(Users::fields().id(), 80_i64)
+                    .value(Users::fields().name(), "Batch Alice")
+                    .value(Users::fields().email(), None::<String>)
+                    .value(Users::fields().active(), true)
+            })
+            .row(|row| {
+                row.value(Users::fields().id(), 81_i64)
+                    .value(Users::fields().name(), "Batch Bob")
+                    .value(Users::fields().email(), None::<String>)
+                    .value(Users::fields().active(), false)
+            })
+            .exec_returning()
+            .await
+            .expect("batch insert");
+        assert_eq!(inserted.len(), 2);
+        assert_eq!(inserted.iter().filter(|user| user.active).count(), 1);
+
+        let upserted = db
+            .upsert_many::<Users>()
+            .row(|row| {
+                row.value(Users::fields().id(), 80_i64)
+                    .value(Users::fields().name(), "Batch Alice 2")
+                    .value(Users::fields().email(), None::<String>)
+                    .value(Users::fields().active(), true)
+            })
+            .row(|row| {
+                row.value(Users::fields().id(), 82_i64)
+                    .value(Users::fields().name(), "Batch Carol")
+                    .value(Users::fields().email(), None::<String>)
+                    .value(Users::fields().active(), true)
+            })
+            .conflict_on(Users::fields().id())
+            .update_from_input(Users::fields().name())
+            .update_from_input(Users::fields().active())
+            .exec_returning()
+            .await
+            .expect("batch upsert");
+        assert_eq!(upserted.len(), 2);
+
+        let alice = db
+            .query(Users::get(80_i64))
+            .first()
+            .await
+            .expect("load upserted user")
+            .expect("user exists");
+        assert_eq!(alice.name, "Batch Alice 2");
+
+        let carol = db
+            .query(Users::get(82_i64))
+            .first()
+            .await
+            .expect("load inserted user")
+            .expect("user exists");
+        assert_eq!(carol.name, "Batch Carol");
+
+        let updated = db
+            .update_many::<Users>()
+            .key(Users::fields().id())
+            .row(|row| {
+                row.key(80_i64)
+                    .value(Users::fields().name(), "Batch Alice 3")
+                    .value(Users::fields().active(), true)
+            })
+            .row(|row| row.key(81_i64).value(Users::fields().name(), "Batch Bob 2"))
+            .exec_returning()
+            .await
+            .expect("batch update");
+        assert_eq!(updated.len(), 2);
+
+        let alice = db
+            .query(Users::get(80_i64))
+            .first()
+            .await
+            .expect("load updated user")
+            .expect("user exists");
+        assert_eq!(alice.name, "Batch Alice 3");
+
+        let bob = db
+            .query(Users::get(81_i64))
+            .first()
+            .await
+            .expect("load updated user")
+            .expect("user exists");
+        assert_eq!(bob.name, "Batch Bob 2");
+        assert!(!bob.active, "an omitted column keeps its existing value");
+
+        db.delete_many::<Users>(Users::fields().id().in_list(ids))
+            .exec()
+            .await
+            .expect("batch delete");
+
+        for id in ids {
+            assert!(
+                db.query(Users::get(id))
+                    .first()
+                    .await
+                    .expect("load deleted user")
+                    .is_none()
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn batch_writes_report_validation_errors() {
+        let pool = sqlx::SqlitePool::connect(env!("DATABASE_URL"))
+            .await
+            .expect("connect to fixture database");
+        let db = wormx::Db::new(pool, wormx::SqliteDialect);
+
+        let error = db
+            .insert_many::<Users>()
+            .exec()
+            .await
+            .expect_err("empty batch is rejected");
+        assert!(error.to_string().contains("at least one row"));
+
+        let error = db
+            .insert_many::<Users>()
+            .row(|row| {
+                row.value(Users::fields().id(), 90_i64)
+                    .value(Users::fields().name(), "Batch Alice")
+            })
+            .row(|row| row.value(Users::fields().id(), 91_i64))
+            .exec()
+            .await
+            .expect_err("mismatched columns are rejected");
+        assert!(error.to_string().contains("missing column"));
+
+        let error = db
+            .update_many::<Users>()
+            .key(Users::fields().id())
+            .row(|row| row.key(90_i64).value(Users::fields().name(), "A"))
+            .row(|row| row.key(90_i64).value(Users::fields().name(), "B"))
+            .exec()
+            .await
+            .expect_err("duplicate keys are rejected");
+        assert!(error.to_string().contains("repeats an earlier key"));
+
+        let error = db
+            .update_many::<Users>()
+            .key(Users::fields().id())
+            .row(|row| row.value(Users::fields().name(), "A"))
+            .exec()
+            .await
+            .expect_err("missing keys are rejected");
+        assert!(error.to_string().contains("missing a key"));
+    }
 }

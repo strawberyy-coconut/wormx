@@ -204,4 +204,98 @@ mod tests {
 
         tx.rollback().await.expect("roll back transaction");
     }
+
+    #[tokio::test]
+    async fn batch_writes_rows() {
+        let pool = sqlx_mssql_rs::MssqlPool::connect(env!("DATABASE_URL"))
+            .await
+            .expect("connect to MSSQL fixture database");
+        let db = wormx::Db::new(pool, wormx::MssqlDialect);
+        let mut tx = db.begin().await.expect("begin transaction");
+
+        let inserted = db
+            .insert_many::<WormxUsers>()
+            .row(|row| {
+                row.value(WormxUsers::fields().name(), "Batch Alice".to_owned())
+                    .value(WormxUsers::fields().email(), None::<String>)
+                    .value(WormxUsers::fields().active(), true)
+            })
+            .row(|row| {
+                row.value(WormxUsers::fields().name(), "Batch Bob".to_owned())
+                    .value(WormxUsers::fields().email(), None::<String>)
+                    .value(WormxUsers::fields().active(), false)
+            })
+            .exec_returning_in(&mut tx)
+            .await
+            .expect("batch insert with OUTPUT");
+        assert_eq!(inserted.len(), 2);
+        let ids = inserted.iter().map(|user| user.id).collect::<Vec<_>>();
+
+        let upserted = db
+            .upsert_many::<WormxUsers>()
+            .row(|row| {
+                row.value(WormxUsers::fields().id(), ids[0])
+                    .value(WormxUsers::fields().name(), "Batch Alice 2".to_owned())
+                    .value(WormxUsers::fields().email(), None::<String>)
+                    .value(WormxUsers::fields().active(), true)
+            })
+            .row(|row| {
+                row.value(WormxUsers::fields().id(), ids[1])
+                    .value(WormxUsers::fields().name(), "Batch Bob 2".to_owned())
+                    .value(WormxUsers::fields().email(), None::<String>)
+                    .value(WormxUsers::fields().active(), true)
+            })
+            .row(|row| {
+                row.value(WormxUsers::fields().id(), 999_999_i64)
+                    .value(WormxUsers::fields().name(), "Batch Carol".to_owned())
+                    .value(WormxUsers::fields().email(), None::<String>)
+                    .value(WormxUsers::fields().active(), true)
+            })
+            .conflict_on(WormxUsers::fields().id())
+            .update_from_input(WormxUsers::fields().name())
+            .update_from_input(WormxUsers::fields().active())
+            .exec_returning_in(&mut tx)
+            .await
+            .expect("batch merge with OUTPUT");
+        assert_eq!(upserted.len(), 3);
+        let carol = upserted
+            .iter()
+            .find(|user| user.name == "Batch Carol")
+            .expect("inserted merge row");
+        assert_ne!(carol.id, 999_999, "identity value is generated");
+
+        db.update_many::<WormxUsers>()
+            .key(WormxUsers::fields().id())
+            .row(|row| {
+                row.key(ids[0])
+                    .value(WormxUsers::fields().name(), "Batch Alice 3".to_owned())
+            })
+            .row(|row| {
+                row.key(ids[1])
+                    .value(WormxUsers::fields().name(), "Batch Bob 3".to_owned())
+            })
+            .exec_in(&mut tx)
+            .await
+            .expect("batch update");
+
+        let users = db
+            .query(WormxUsers::all())
+            .filter(WormxUsers::fields().id().in_list(ids.clone()))
+            .order_by(WormxUsers::fields().id().asc())
+            .exec_in(&mut tx)
+            .await
+            .expect("load batch rows");
+        assert_eq!(users.len(), 2);
+        assert_eq!(users[0].name, "Batch Alice 3");
+        assert_eq!(users[1].name, "Batch Bob 3");
+
+        let deleted = db
+            .delete_many::<WormxUsers>(WormxUsers::fields().name().like("Batch%".to_owned()))
+            .exec_returning_in(&mut tx)
+            .await
+            .expect("batch delete with OUTPUT");
+        assert_eq!(deleted.len(), 3);
+
+        tx.rollback().await.expect("roll back transaction");
+    }
 }

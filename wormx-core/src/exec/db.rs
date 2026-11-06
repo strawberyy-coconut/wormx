@@ -15,7 +15,8 @@ use sqlx_core::types::Type;
 
 use crate::plan::backend::{Dialect, SupportsUpsert};
 use crate::plan::command::Writer;
-use crate::plan::dml::{Delete, Insert, Update, Upsert};
+use crate::plan::dml::{Delete, Insert, InsertMany, Update, UpdateManyStart, Upsert, UpsertMany};
+use crate::plan::expr::Expr;
 use crate::plan::query::{IntoSelect, Select};
 
 /// A database handle that pairs a SQLx pool with a wormx dialect.
@@ -87,6 +88,33 @@ impl<D: Dialect + Clone> Db<D> {
         D: SupportsUpsert,
     {
         Upsert::new(self.clone())
+    }
+
+    /// Starts a multi-row `INSERT` for a generated table.
+    pub fn insert_many<T: crate::schema::Table>(&self) -> InsertMany<D, T> {
+        InsertMany::new(self.clone())
+    }
+
+    /// Starts a multi-row upsert for a generated table.
+    ///
+    /// Available only for dialects that implement [`SupportsUpsert`].
+    pub fn upsert_many<T: crate::schema::Table>(&self) -> UpsertMany<D, T>
+    where
+        D: SupportsUpsert,
+    {
+        UpsertMany::new(self.clone())
+    }
+
+    /// Starts a per-row batch `UPDATE`. Call `.key(...)` on the returned
+    /// builder to choose the matching column.
+    pub fn update_many<T: crate::schema::Table>(&self) -> UpdateManyStart<D, T> {
+        UpdateManyStart::new(self.clone())
+    }
+
+    /// Starts a `DELETE` with a filter, typically an `IN (...)` list for a
+    /// bulk delete.
+    pub fn delete_many<T: crate::schema::Table>(&self, filter: Expr<bool, D>) -> Delete<D, T> {
+        Delete::new(self.clone()).filter(filter)
     }
 
     /// Starts a raw SQL query. The caller is responsible for the SQL text.
@@ -165,6 +193,33 @@ impl<'a, D: Dialect + Clone> Transaction<'a, D> {
         D: SupportsUpsert,
     {
         Upsert::new(self.db.clone())
+    }
+
+    /// Starts a multi-row `INSERT`.
+    pub fn insert_many<T: crate::schema::Table>(&self) -> InsertMany<D, T> {
+        InsertMany::new(self.db.clone())
+    }
+
+    /// Starts a multi-row upsert.
+    ///
+    /// Available only for dialects that implement [`SupportsUpsert`].
+    pub fn upsert_many<T: crate::schema::Table>(&self) -> UpsertMany<D, T>
+    where
+        D: SupportsUpsert,
+    {
+        UpsertMany::new(self.db.clone())
+    }
+
+    /// Starts a per-row batch `UPDATE`. Call `.key(...)` on the returned
+    /// builder to choose the matching column.
+    pub fn update_many<T: crate::schema::Table>(&self) -> UpdateManyStart<D, T> {
+        UpdateManyStart::new(self.db.clone())
+    }
+
+    /// Starts a `DELETE` with a filter, typically an `IN (...)` list for a
+    /// bulk delete.
+    pub fn delete_many<T: crate::schema::Table>(&self, filter: Expr<bool, D>) -> Delete<D, T> {
+        Delete::new(self.db.clone()).filter(filter)
     }
 
     /// Starts a raw SQL query.
