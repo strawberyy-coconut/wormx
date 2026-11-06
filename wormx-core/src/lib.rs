@@ -12,10 +12,11 @@
 //! (`query`, `dml`, `join`, `dialect`, `metadata`, …) remain available as
 //! aliases for compatibility.
 //!
-//! Core stays deliberately conservative: an operation belongs here only when
-//! several database backends share it as a first-class concept. Dialect-specific
-//! spellings belong in a driver, behind a `SqlSyntax` hook, or in an expression
-//! built with `sql_function!` or `operator!`.
+//! Core stays deliberately lean: SQL-standard operations are expected to be
+//! supported, even when one bundled driver needs a capability flag to gate the
+//! typed entry point. Dialect-specific spellings belong in a driver, behind a
+//! `SqlSyntax` hook, or in an expression built with `sql_function!` or
+//! `operator!`.
 
 pub mod config;
 pub mod exec;
@@ -37,7 +38,7 @@ pub use plan::expr::{
     Window, coalesce, count_star, dense_rank, rank, row_number,
 };
 pub use plan::include::Include;
-pub use plan::join::{Join, JoinKind, JoinSource, TableSource};
+pub use plan::join::{Join, JoinConstraint, JoinKind, JoinSource, TableSource};
 pub use plan::query::{
     Column, ColumnSelect, CountPlan, CountProjection, Cte, DeletePlan, DeleteRenderer, Filtered,
     Get, InsertManyPlan, InsertPlan, InsertRenderer, IntoSelect, ProjectedSelect, Projection,
@@ -54,7 +55,9 @@ pub use sql::render::{
 pub use sql::{
     Dialect, Fixity, Function, FunctionArgs, Operator, OperatorExpr, ReturningOp,
     ReturningPosition, SqlDialect, SqlSyntax, SqlWriter, SupportsArrays, SupportsFullJoin,
-    SupportsFullTextSearch, SupportsJson, SupportsReturning, SupportsUpsert, Textual, Writer, call,
+    SupportsFullTextSearch, SupportsJson, SupportsNaturalJoin, SupportsReturning,
+    SupportsSourceSuffix, SupportsStatementTail, SupportsUpsert, SupportsUsing, Textual, Writer,
+    call,
 };
 
 // Backwards-compatible module paths. Prefer `schema`, `plan`, `sql`, and

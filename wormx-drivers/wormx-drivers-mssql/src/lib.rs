@@ -4,7 +4,8 @@ use sqlx_core::error::{Error, Result};
 use wormx_core::{
     Delete, Dialect, ProjectedSelect, Projection, ReturningOp, ReturningPosition, Select,
     SqlSyntax, SqlWriter, SupportsFullJoin, SupportsFullTextSearch, SupportsReturning,
-    SupportsUpsert, Table, TableSource, Update, Upsert, UpsertManyPlan, UpsertPlan, UpsertRenderer,
+    SupportsSourceSuffix, SupportsStatementTail, SupportsUpsert, Table, TableSource, Update,
+    Upsert, UpsertManyPlan, UpsertPlan, UpsertRenderer,
 };
 
 /// The Microsoft SQL Server dialect marker.
@@ -69,6 +70,10 @@ impl SqlSyntax for MssqlDialect {
         writer.push_ident("source");
         writer.write_identifier_separator();
         writer.push_ident(column);
+    }
+
+    fn write_boolean_literal(value: bool, writer: &mut SqlWriter<Self>) {
+        writer.push(if value { "1 = 1" } else { "1 = 0" });
     }
 
     fn write_limit_offset(
@@ -447,6 +452,8 @@ fn write_insert_branch(
 }
 
 impl SupportsFullJoin for MssqlDialect {}
+impl SupportsSourceSuffix for MssqlDialect {}
+impl SupportsStatementTail for MssqlDialect {}
 impl SupportsFullTextSearch for MssqlDialect {}
 impl SupportsReturning for MssqlDialect {}
 impl SupportsUpsert for MssqlDialect {}
@@ -1125,5 +1132,14 @@ mod tests {
             "{sql}"
         );
         assert!(sql.ends_with("OUTPUT INSERTED.*;"), "{sql}");
+    }
+
+    #[test]
+    fn renders_sql_server_boolean_literals() {
+        let mut writer = SqlWriter::new(MssqlDialect);
+        let mut expr = Expr::<bool, MssqlDialect>::literal(false);
+        expr.render(&mut writer).expect("render boolean literal");
+        let (sql, _args) = writer.finish();
+        assert_eq!(sql, "1 = 0");
     }
 }

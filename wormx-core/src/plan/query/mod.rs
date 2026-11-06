@@ -15,7 +15,7 @@ use sqlx_core::query_as::query_as_with;
 use sqlx_core::sql_str::{AssertSqlSafe, SqlSafeStr};
 use sqlx_core::types::Type;
 
-use super::backend::Dialect;
+use super::backend::{Dialect, SupportsSourceSuffix, SupportsStatementTail};
 use super::command::Writer;
 use super::expr::{ColumnRef, Expr, ExprKind, IntoExpr, Order};
 use super::include::Include;
@@ -380,7 +380,7 @@ pub trait Subquery<D: Dialect>: Send {
     fn render(&mut self, writer: &mut Writer<D>) -> Result<()>;
 }
 
-/// A common table expression: `name AS (query)`.
+/// A common table expression: a name bound to a query.
 pub struct Cte<D: Dialect> {
     name: String,
     query: Box<dyn Subquery<D>>,
@@ -395,13 +395,17 @@ impl<D: Dialect> Cte<D> {
         }
     }
 
-    /// Writes the CTE into the query.
-    pub fn render(&mut self, writer: &mut Writer<D>) -> Result<()> {
-        writer.push_ident(&self.name);
-        writer.push(" AS (");
-        self.query.render(writer)?;
-        writer.push(")");
-        Ok(())
+    /// Returns the CTE name.
+    pub fn name(&self) -> &str {
+        &self.name
+    }
+
+    /// Returns the CTE query for rendering.
+    ///
+    /// SQL rendering lives in [`crate::sql::render`]; custom renderers can use
+    /// this accessor to write their own CTE syntax.
+    pub fn query_mut(&mut self) -> &mut dyn Subquery<D> {
+        self.query.as_mut()
     }
 }
 
@@ -469,13 +473,19 @@ where
     }
 
     /// Attaches an opaque, dialect-defined suffix to the base table.
-    pub fn with_source_suffix(mut self, suffix: &'static str) -> Self {
+    pub fn with_source_suffix(mut self, suffix: &'static str) -> Self
+    where
+        D: SupportsSourceSuffix,
+    {
         self.state = self.state.with_source_suffix(suffix);
         self
     }
 
     /// Attaches an opaque, dialect-defined tail to the statement.
-    pub fn with_tail(mut self, tail: &'static str) -> Self {
+    pub fn with_tail(mut self, tail: &'static str) -> Self
+    where
+        D: SupportsStatementTail,
+    {
         self.state = self.state.with_tail(tail);
         self
     }
@@ -669,7 +679,7 @@ where
             Some(primary_key) => select.filter(
                 Column::<T>::new(T::DEF.schema, T::DEF.name, primary_key).eq::<D, _>(self.key),
             ),
-            None => select.filter(Expr::<bool, D>::raw("1 = 0")),
+            None => select.filter(Expr::<bool, D>::literal(false)),
         }
     }
 }
@@ -976,13 +986,19 @@ impl<D: Dialect + Clone, T: Table + 'static> Select<D, T> {
     }
 
     /// Attaches an opaque, dialect-defined suffix to the base table.
-    pub fn with_source_suffix(mut self, suffix: &'static str) -> Self {
+    pub fn with_source_suffix(mut self, suffix: &'static str) -> Self
+    where
+        D: SupportsSourceSuffix,
+    {
         self.state = self.state.with_source_suffix(suffix);
         self
     }
 
     /// Attaches an opaque, dialect-defined tail to the statement.
-    pub fn with_tail(mut self, tail: &'static str) -> Self {
+    pub fn with_tail(mut self, tail: &'static str) -> Self
+    where
+        D: SupportsStatementTail,
+    {
         self.state = self.state.with_tail(tail);
         self
     }

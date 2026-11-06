@@ -64,6 +64,10 @@ pub fn render_expr_kind<D: SqlDialect>(
             writer.write_group_end();
             Ok(())
         }
+        ExprKind::Star => {
+            writer.write_star();
+            Ok(())
+        }
         ExprKind::Prefix {
             operator,
             operand,

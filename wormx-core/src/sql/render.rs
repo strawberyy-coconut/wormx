@@ -1,7 +1,7 @@
 use sqlx_core::error::{Error, Result};
 
 use crate::plan::expr::{ColumnRef, Expr, ExprKind, Order};
-use crate::plan::join::{Join, JoinSource, TableSource};
+use crate::plan::join::{Join, JoinConstraint, JoinSource, TableSource};
 use crate::plan::query::{
     CountPlan, CountProjection, Cte, DeletePlan, DeleteRenderer, InsertManyPlan, InsertPlan,
     InsertRenderer, Projection, ProjectionVisitor, SelectPlan, SelectRenderer, UpdatePlan,
@@ -28,7 +28,31 @@ impl TableSource {
 impl<D: SqlDialect> Join<D> {
     /// Writes the join clause.
     pub fn render(&mut self, writer: &mut Writer<D>) -> Result<()> {
-        writer.write_join(self.kind);
+        match (&self.kind, &self.constraint) {
+            (crate::plan::join::JoinKind::Cross, JoinConstraint::None) => {}
+            (crate::plan::join::JoinKind::Cross, _) => {
+                return Err(Error::InvalidArgument(
+                    "CROSS JOIN cannot have an ON, USING, or NATURAL constraint".to_owned(),
+                ));
+            }
+            (_, JoinConstraint::None) => {
+                return Err(Error::InvalidArgument(
+                    "a non-CROSS join requires ON, USING, or NATURAL".to_owned(),
+                ));
+            }
+            (_, JoinConstraint::Using([])) => {
+                return Err(Error::InvalidArgument(
+                    "USING requires at least one column".to_owned(),
+                ));
+            }
+            _ => {}
+        }
+
+        match &self.constraint {
+            JoinConstraint::Natural => writer.write_natural_join(self.kind),
+            _ => writer.write_join(self.kind),
+        }
+
         match &mut self.source {
             JoinSource::Table(source) => source.render(writer),
             JoinSource::Derived { query, alias } => {
@@ -40,8 +64,25 @@ impl<D: SqlDialect> Join<D> {
             }
             JoinSource::Named(name) => writer.push_ident(name),
         }
-        writer.write_on();
-        self.on.render(writer)
+
+        match &mut self.constraint {
+            JoinConstraint::On(on) => {
+                writer.write_on();
+                on.render(writer)
+            }
+            JoinConstraint::Using(columns) => {
+                writer.write_using();
+                for (index, column) in columns.iter().enumerate() {
+                    if index > 0 {
+                        writer.write_comma();
+                    }
+                    writer.push_ident(column);
+                }
+                writer.write_group_end();
+                Ok(())
+            }
+            JoinConstraint::Natural | JoinConstraint::None => Ok(()),
+        }
     }
 }
 
@@ -187,6 +228,17 @@ impl<D: SqlDialect> SelectRenderer<D> for SqlSelect {
         writer.write_count_star();
         write_from_filters(writer, plan.table, plan.filters, plan.joins)?;
         write_tail(writer, plan.tail);
+        Ok(())
+    }
+}
+
+impl<D: SqlDialect> Cte<D> {
+    /// Writes the CTE using SQL's `name AS (query)` spelling.
+    pub fn render(&mut self, writer: &mut Writer<D>) -> Result<()> {
+        writer.push_ident(self.name());
+        writer.push(" AS (");
+        self.query_mut().render(writer)?;
+        writer.push(")");
         Ok(())
     }
 }

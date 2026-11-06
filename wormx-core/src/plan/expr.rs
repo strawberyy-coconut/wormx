@@ -103,6 +103,8 @@ pub enum ExprKind<D: Dialect> {
         operand: Box<Expr<(), D>>,
         distinct: bool,
     },
+    /// A `*` projection marker, used by `COUNT(*)`.
+    Star,
     Prefix {
         operator: &'static str,
         operand: Box<Expr<(), D>>,
@@ -463,6 +465,11 @@ impl<T, D: Dialect> Expr<T, D> {
 }
 
 impl<D: Dialect> Expr<bool, D> {
+    /// Creates a boolean literal expression.
+    pub fn literal(value: bool) -> Self {
+        Expr::from_kind(ExprKind::LiteralBool(value))
+    }
+
     pub fn and(self, other: Expr<bool, D>) -> Self {
         Expr::from_kind(ExprKind::Logical {
             op: LogicalOp::And,
@@ -657,7 +664,7 @@ impl<D: Dialect> Default for Window<D> {
 /// `COUNT(*)`.
 pub fn count_star<D: Dialect>() -> Expr<i64, D> {
     Expr::from_kind(ExprKind::Count {
-        operand: Box::new(Expr::raw("*")),
+        operand: Box::new(Expr::from_kind(ExprKind::Star)),
         distinct: false,
     })
 }

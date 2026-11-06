@@ -81,14 +81,14 @@ where
         let select = db.query(Query::<T>::new());
 
         let Some(key) = self.key else {
-            return select.filter(Expr::<bool, D>::raw("1 = 0"));
+            return select.filter(Expr::<bool, D>::literal(false));
         };
 
         let Some(target_column) = self
             .target_column
             .or_else(|| T::DEF.primary_key.first().copied())
         else {
-            return select.filter(Expr::<bool, D>::raw("1 = 0"));
+            return select.filter(Expr::<bool, D>::literal(false));
         };
 
         select.filter(Column::<T>::new(T::DEF.schema, T::DEF.name, target_column).eq::<D, _>(key))

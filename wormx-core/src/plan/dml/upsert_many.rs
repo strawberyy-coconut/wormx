@@ -11,7 +11,7 @@ use sqlx_core::query_as::query_as_with;
 use sqlx_core::sql_str::{AssertSqlSafe, SqlSafeStr};
 
 use crate::exec::{Db, Transaction};
-use crate::plan::backend::{Dialect, SupportsReturning};
+use crate::plan::backend::{Dialect, SupportsReturning, SupportsSourceSuffix};
 use crate::plan::dml::batch::{RowBuilder, normalize_rows};
 use crate::plan::expr::{Expr, IntoExpr};
 use crate::plan::join::TableSource;
@@ -92,7 +92,10 @@ impl<D: Dialect + Clone, T: Table> UpsertMany<D, T> {
     }
 
     /// Attaches an opaque, dialect-defined suffix to the target table.
-    pub fn with_source_suffix(mut self, suffix: &'static str) -> Self {
+    pub fn with_source_suffix(mut self, suffix: &'static str) -> Self
+    where
+        D: SupportsSourceSuffix,
+    {
         self.source.suffix = Some(suffix);
         self
     }

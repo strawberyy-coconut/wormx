@@ -156,6 +156,30 @@ mod tests {
     }
 
     #[test]
+    fn renders_standard_boolean_literals() {
+        use wormx::{Expr, SqlWriter, SqliteDialect};
+
+        let dialect = SqliteDialect;
+        let mut writer = SqlWriter::new(dialect);
+        let mut expr = Expr::<bool, SqliteDialect>::literal(false);
+        expr.render(&mut writer).expect("render boolean literal");
+        let (sql, _args) = writer.finish();
+        assert_eq!(sql, "FALSE");
+    }
+
+    #[test]
+    fn renders_count_star_expression() {
+        use wormx::{SqlWriter, SqliteDialect, count_star};
+
+        let dialect = SqliteDialect;
+        let mut writer = SqlWriter::new(dialect);
+        let mut expr = count_star::<SqliteDialect>();
+        expr.render(&mut writer).expect("render COUNT(*)");
+        let (sql, _args) = writer.finish();
+        assert_eq!(sql, "COUNT(*)");
+    }
+
+    #[test]
     fn renders_case_expressions() {
         use wormx::{Expr, SqlWriter, SqliteDialect};
 
@@ -1313,6 +1337,100 @@ mod tests {
             .expect("run FULL JOIN");
 
         assert_eq!(rows.len(), 2);
+    }
+
+    #[tokio::test]
+    async fn supports_cross_using_and_natural_joins() {
+        use wormx::{Join, JoinKind};
+
+        let pool = sqlx::SqlitePool::connect(env!("DATABASE_URL"))
+            .await
+            .expect("connect to fixture database");
+        let db = wormx::Db::new(pool, wormx::SqliteDialect);
+
+        let cross_rows: Vec<(String, String)> = db
+            .query(Users::all())
+            .join(Join::cross(Todos::fields().table()))
+            .select((Users::fields().name(), Todos::fields().title()))
+            .exec()
+            .await
+            .expect("run CROSS JOIN");
+        assert_eq!(cross_rows.len(), 2);
+
+        let using_rows: Vec<String> = db
+            .query(Users::all())
+            .join(Join::using(
+                JoinKind::Inner,
+                Todos::fields().table(),
+                &["id"],
+            ))
+            .select(Todos::fields().title())
+            .exec()
+            .await
+            .expect("run USING join");
+        assert_eq!(using_rows, vec!["Write the ORM".to_owned()]);
+
+        let natural_rows: Vec<(i64, String)> = db
+            .query(Orders::all())
+            .join(Join::natural(JoinKind::Inner, Accounts::fields().table()))
+            .select((Orders::fields().id(), Accounts::fields().name()))
+            .order_by(Orders::fields().id().asc())
+            .exec()
+            .await
+            .expect("run NATURAL JOIN");
+        assert_eq!(
+            natural_rows,
+            vec![(1, "Acme".to_owned()), (2, "Acme Two".to_owned())]
+        );
+
+        let mut cross_query = db
+            .query(Users::all())
+            .join(Join::cross(Todos::fields().table()));
+        let (cross_sql, _) = cross_query.render().expect("render CROSS JOIN");
+        assert!(cross_sql.contains("CROSS JOIN"), "{cross_sql}");
+
+        let mut using_query = db.query(Users::all()).join(Join::using(
+            JoinKind::Inner,
+            Todos::fields().table(),
+            &["id"],
+        ));
+        let (using_sql, _) = using_query.render().expect("render USING join");
+        assert!(using_sql.contains("USING (\"id\")"), "{using_sql}");
+
+        let mut natural_query = db
+            .query(Orders::all())
+            .join(Join::natural(JoinKind::Inner, Accounts::fields().table()));
+        let (natural_sql, _) = natural_query.render().expect("render NATURAL JOIN");
+        assert!(natural_sql.contains("NATURAL JOIN"), "{natural_sql}");
+    }
+
+    #[test]
+    fn rejects_invalid_join_constraints() {
+        use wormx::{Expr, Join, JoinConstraint, JoinKind, SqlWriter, SqliteDialect};
+
+        let mut cross_with_on = Join::new(
+            JoinKind::Cross,
+            Todos::fields().table(),
+            JoinConstraint::On(Expr::<bool, SqliteDialect>::literal(true)),
+        );
+        let mut writer = SqlWriter::new(SqliteDialect);
+        assert!(cross_with_on.render(&mut writer).is_err());
+
+        let mut inner_without_constraint = Join::new(
+            JoinKind::Inner,
+            Todos::fields().table(),
+            JoinConstraint::None,
+        );
+        let mut writer = SqlWriter::new(SqliteDialect);
+        assert!(inner_without_constraint.render(&mut writer).is_err());
+
+        let mut empty_using = Join::using(
+            JoinKind::Inner,
+            Todos::fields().table(),
+            &[] as &'static [&'static str],
+        );
+        let mut writer = SqlWriter::new(SqliteDialect);
+        assert!(empty_using.render(&mut writer).is_err());
     }
 
     #[tokio::test]

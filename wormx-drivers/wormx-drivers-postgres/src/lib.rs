@@ -2,7 +2,7 @@
 
 use wormx_core::{
     Dialect, SqlSyntax, SupportsArrays, SupportsFullJoin, SupportsFullTextSearch, SupportsJson,
-    SupportsReturning, SupportsUpsert,
+    SupportsNaturalJoin, SupportsReturning, SupportsUpsert, SupportsUsing,
 };
 
 /// The PostgreSQL dialect marker.
@@ -27,6 +27,8 @@ impl SqlSyntax for PostgresDialect {}
 
 impl SupportsReturning for PostgresDialect {}
 impl SupportsFullJoin for PostgresDialect {}
+impl SupportsUsing for PostgresDialect {}
+impl SupportsNaturalJoin for PostgresDialect {}
 impl SupportsFullTextSearch for PostgresDialect {}
 impl SupportsJson for PostgresDialect {}
 impl SupportsArrays for PostgresDialect {}

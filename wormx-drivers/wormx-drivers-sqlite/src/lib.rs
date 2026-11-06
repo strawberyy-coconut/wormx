@@ -1,8 +1,8 @@
 //! SQLite support for wormx, built on `sqlx-sqlite`.
 
 use wormx_core::{
-    Dialect, SqlSyntax, SupportsFullJoin, SupportsFullTextSearch, SupportsJson, SupportsReturning,
-    SupportsUpsert,
+    Dialect, SqlSyntax, SupportsFullJoin, SupportsFullTextSearch, SupportsJson,
+    SupportsNaturalJoin, SupportsReturning, SupportsUpsert, SupportsUsing,
 };
 
 /// The SQLite dialect marker.
@@ -45,6 +45,8 @@ impl SqlSyntax for SqliteDialect {
 
 impl SupportsReturning for SqliteDialect {}
 impl SupportsFullJoin for SqliteDialect {}
+impl SupportsUsing for SqliteDialect {}
+impl SupportsNaturalJoin for SqliteDialect {}
 impl SupportsFullTextSearch for SqliteDialect {}
 impl SupportsJson for SqliteDialect {}
 impl SupportsUpsert for SqliteDialect {}

@@ -205,6 +205,27 @@ pub trait SqlSyntax: Dialect + 'static + Sized + Send + Sync {
             crate::plan::join::JoinKind::Left => " LEFT JOIN ",
             crate::plan::join::JoinKind::Right => " RIGHT JOIN ",
             crate::plan::join::JoinKind::Full => " FULL JOIN ",
+            crate::plan::join::JoinKind::Cross => " CROSS JOIN ",
+        });
+    }
+
+    /// Writes a `NATURAL` join keyword.
+    ///
+    /// The default spells the SQL-standard form. Dialects that cannot render a
+    /// natural join should gate their typed constructors with
+    /// [`crate::plan::backend::SupportsNaturalJoin`].
+    fn write_natural_join(kind: crate::plan::join::JoinKind, writer: &mut SqlWriter<Self>)
+    where
+        Self: Dialect,
+    {
+        writer.push(match kind {
+            crate::plan::join::JoinKind::Inner => " NATURAL JOIN ",
+            crate::plan::join::JoinKind::Left => " NATURAL LEFT JOIN ",
+            crate::plan::join::JoinKind::Right => " NATURAL RIGHT JOIN ",
+            crate::plan::join::JoinKind::Full => " NATURAL FULL JOIN ",
+            // The renderer rejects `NATURAL CROSS JOIN`; this keeps the default
+            // total without emitting a different constraint.
+            crate::plan::join::JoinKind::Cross => " NATURAL JOIN ",
         });
     }
 
@@ -213,6 +234,16 @@ pub trait SqlSyntax: Dialect + 'static + Sized + Send + Sync {
         Self: Dialect,
     {
         writer.push(" ON ");
+    }
+
+    /// Writes the opening of a `USING (...)` constraint.
+    ///
+    /// The renderer writes the column list and the closing parenthesis.
+    fn write_using(writer: &mut SqlWriter<Self>)
+    where
+        Self: Dialect,
+    {
+        writer.push(" USING (");
     }
 
     fn write_group_by(writer: &mut SqlWriter<Self>)
@@ -376,11 +407,15 @@ pub trait SqlSyntax: Dialect + 'static + Sized + Send + Sync {
         writer.push(" LIKE ");
     }
 
+    /// Writes a SQL boolean literal.
+    ///
+    /// The default is the SQL-standard `TRUE` / `FALSE`. SQL Server has no
+    /// boolean literal expression and overrides this with a predicate.
     fn write_boolean_literal(value: bool, writer: &mut SqlWriter<Self>)
     where
         Self: Dialect,
     {
-        writer.push(if value { "1 = 1" } else { "1 = 0" });
+        writer.push(if value { "TRUE" } else { "FALSE" });
     }
 
     fn write_group_start(writer: &mut SqlWriter<Self>)

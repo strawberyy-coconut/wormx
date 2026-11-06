@@ -91,8 +91,16 @@ impl<D: SqlDialect> Writer<D> {
         D::write_join(kind, self);
     }
 
+    pub fn write_natural_join(&mut self, kind: crate::plan::join::JoinKind) {
+        D::write_natural_join(kind, self);
+    }
+
     pub fn write_on(&mut self) {
         D::write_on(self);
+    }
+
+    pub fn write_using(&mut self) {
+        D::write_using(self);
     }
 
     pub fn write_group_by(&mut self) {

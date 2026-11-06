@@ -16,7 +16,7 @@ use sqlx_core::sql_str::{AssertSqlSafe, SqlSafeStr};
 use sqlx_core::types::Type;
 
 use crate::exec::{Db, Transaction};
-use crate::plan::backend::{Dialect, SupportsReturning};
+use crate::plan::backend::{Dialect, SupportsReturning, SupportsSourceSuffix};
 use crate::plan::expr::{ColumnRef, Expr, ExprKind, IntoExpr};
 use crate::plan::join::TableSource;
 use crate::plan::query::{Column, UpdatePlan, UpdateRenderer};
@@ -89,7 +89,10 @@ impl<D: Dialect + Clone, T: Table> UpdateManyStart<D, T> {
     }
 
     /// Attaches an opaque, dialect-defined suffix to the target table.
-    pub fn with_source_suffix(mut self, suffix: &'static str) -> Self {
+    pub fn with_source_suffix(mut self, suffix: &'static str) -> Self
+    where
+        D: SupportsSourceSuffix,
+    {
         self.source.suffix = Some(suffix);
         self
     }
@@ -138,7 +141,10 @@ impl<D: Dialect + Clone, T: Table, K> UpdateMany<D, T, K> {
     }
 
     /// Attaches an opaque, dialect-defined suffix to the target table.
-    pub fn with_source_suffix(mut self, suffix: &'static str) -> Self {
+    pub fn with_source_suffix(mut self, suffix: &'static str) -> Self
+    where
+        D: SupportsSourceSuffix,
+    {
         self.source.suffix = Some(suffix);
         self
     }

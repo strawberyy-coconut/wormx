@@ -1067,7 +1067,7 @@ fn quote_composite_handle(relation: &Relation) -> TokenStream {
             });
         quote! {
             if #(#checks)||* {
-                return select.filter(::wormx::Expr::<bool, D>::raw("1 = 0"));
+                return select.filter(::wormx::Expr::<bool, D>::literal(false));
             }
         }
     } else {

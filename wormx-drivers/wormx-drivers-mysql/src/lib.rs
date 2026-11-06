@@ -2,8 +2,8 @@
 
 use sqlx_core::error::{Error, Result};
 use wormx_core::{
-    Dialect, SqlSyntax, SqlWriter, SupportsFullTextSearch, SupportsJson, SupportsUpsert,
-    UpsertManyPlan, UpsertPlan, UpsertRenderer, write_values_rows,
+    Dialect, SqlSyntax, SqlWriter, SupportsFullTextSearch, SupportsJson, SupportsNaturalJoin,
+    SupportsUpsert, SupportsUsing, UpsertManyPlan, UpsertPlan, UpsertRenderer, write_values_rows,
 };
 
 /// The MySQL dialect marker.
@@ -155,6 +155,8 @@ fn push_table(writer: &mut SqlWriter<MySqlDialect>, table: &wormx_core::TableDef
     writer.push_ident(table.name);
 }
 
+impl SupportsUsing for MySqlDialect {}
+impl SupportsNaturalJoin for MySqlDialect {}
 impl SupportsFullTextSearch for MySqlDialect {}
 impl SupportsJson for MySqlDialect {}
 impl SupportsUpsert for MySqlDialect {}

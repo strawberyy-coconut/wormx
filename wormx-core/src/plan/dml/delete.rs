@@ -11,7 +11,7 @@ use sqlx_core::query_as::query_as_with;
 use sqlx_core::sql_str::{AssertSqlSafe, SqlSafeStr};
 
 use crate::exec::{Db, Transaction};
-use crate::plan::backend::{Dialect, SupportsReturning};
+use crate::plan::backend::{Dialect, SupportsReturning, SupportsSourceSuffix};
 use crate::plan::expr::Expr;
 use crate::plan::join::TableSource;
 use crate::plan::query::{DeletePlan, DeleteRenderer};
@@ -36,7 +36,10 @@ impl<D: Dialect + Clone, T: Table> Delete<D, T> {
     }
 
     /// Attaches an opaque, dialect-defined suffix to the target table.
-    pub fn with_source_suffix(mut self, suffix: &'static str) -> Self {
+    pub fn with_source_suffix(mut self, suffix: &'static str) -> Self
+    where
+        D: SupportsSourceSuffix,
+    {
         self.source.suffix = Some(suffix);
         self
     }

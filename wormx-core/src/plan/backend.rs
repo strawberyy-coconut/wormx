@@ -41,11 +41,38 @@ pub trait SupportsReturning: Dialect {}
 ///
 /// This gates [`crate::plan::join::Join::full`] at compile time.
 pub trait SupportsFullJoin: Dialect {}
+/// Marks a dialect that supports `JOIN ... USING (...)`.
+///
+/// This gates [`crate::plan::join::Join::using`] at compile time.
+pub trait SupportsUsing: Dialect {}
+/// Marks a dialect that supports `NATURAL JOIN`.
+///
+/// This gates [`crate::plan::join::Join::natural`] at compile time.
+pub trait SupportsNaturalJoin: Dialect {}
+/// Marks a dialect that interprets an opaque source suffix.
+///
+/// This gates the typed `with_source_suffix` builders. The lower-level
+/// [`crate::plan::join::TableSource::with_suffix`] builder remains available as
+/// a plan escape hatch.
+pub trait SupportsSourceSuffix: Dialect {}
+/// Marks a dialect that interprets an opaque statement tail.
+///
+/// This gates the typed `with_tail` builders.
+pub trait SupportsStatementTail: Dialect {}
 /// Marks a dialect that supports full-text search.
+///
+/// Core has no portable full-text query API; this marker is for driver or
+/// extension crates that provide one.
 pub trait SupportsFullTextSearch: Dialect {}
 /// Marks a dialect that supports JSON values.
+///
+/// Core has no portable JSON query API; this marker is for driver or extension
+/// crates that provide one.
 pub trait SupportsJson: Dialect {}
 /// Marks a dialect that supports array values.
+///
+/// Core has no portable array query API; this marker is for driver or extension
+/// crates that provide one.
 pub trait SupportsArrays: Dialect {}
 /// Marks a dialect that supports upserts.
 ///

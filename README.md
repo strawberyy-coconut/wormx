@@ -35,19 +35,39 @@ renderers, while reusing the plan, relations, includes, transactions, and
 `FromRow` machinery.
 
 Renderers receive plan structs, so they can map a plan to their own constructs
-instead of implementing SQL. `Join` exposes its `kind`, `source`, and `on`
-fields, and `ExprKind` is public, so a renderer can inspect the plan rather than
-emit `JOIN ... ON ...`.
+instead of implementing SQL. `Join` exposes its `kind`, `source`, and
+`constraint` fields, and `ExprKind` is public, so a renderer can inspect the
+plan rather than emit `JOIN ... ON ...`.
 
 ### What belongs in core
 
-`wormx-core` is deliberately conservative. It accepts an operation only when
-several database backends share it as a first-class concept, not merely one or
-two. SQL-standard operations such as `CASE`, `CAST`, and `COALESCE` qualify.
-Dialect-specific spellings do not: put them behind a `SqlSyntax` hook, in the
-driver crate, or express them with `sql_function!` / `operator!`. This keeps the
-neutral AST portable and stops one database's syntax from leaking into
-expressions meant to run elsewhere.
+`wormx-core` is deliberately lean, not deliberately incomplete.
+
+Core models SQL-standard operations. “SQL standard” is a reasonable expectation
+to be supported, so a standard operation belongs in core even when one bundled
+driver cannot render it. When support is not universal, core models the
+operation and a `Supports...` capability trait gates the typed entry point. That
+keeps unsupported use a compile-time error instead of a rendered statement the
+database rejects.
+
+Core does not own vendor spelling. Vendor-only syntax belongs in a driver
+crate, behind a `SqlSyntax` hook, in `sql_function!` / `operator!`, or in a
+typed driver extension. Opaque source suffixes and statement tails are escape
+hatches, not core features.
+
+“Lean” means the neutral plan contains no vendor vocabulary. It does not mean
+omitting a standard SQL feature merely because one backend lacks it.
+
+### Capability policy
+
+Capabilities are marker traits:
+
+- Add a marker when a standard or expected operation is missing from at least
+  one supported backend.
+- Gate the typed constructor or execution method with that marker.
+- Keep the plan value inspectable so custom renderers can support more.
+- Do not add a marker when every supported backend can render the operation.
+- Do not silently ignore an unsupported capability.
 
 Compile-time introspection is pluggable too. `wormx-macros-core` accepts a
 `TableDriver` — a describe function plus a constraints function — and
@@ -414,6 +434,40 @@ let users = db
     .exec()
     .await?;
 ```
+
+`CROSS JOIN` and the two SQL-standard constraint forms are available directly:
+
+```rust
+let crossed = db
+    .query(Users::all())
+    .join(wormx::Join::cross(Todos::fields().table()))
+    .select((Users::fields().name(), Todos::fields().title()))
+    .exec()
+    .await?;
+
+let joined = db
+    .query(Users::all())
+    .join(wormx::Join::using(
+        wormx::JoinKind::Inner,
+        Todos::fields().table(),
+        &["id"],
+    ))
+    .exec()
+    .await?;
+
+let natural = db
+    .query(Orders::all())
+    .join(wormx::Join::natural(
+        wormx::JoinKind::Inner,
+        Accounts::fields().table(),
+    ))
+    .exec()
+    .await?;
+```
+
+`USING` and `NATURAL` are gated by `SupportsUsing` and `SupportsNaturalJoin`.
+They are supported by PostgreSQL, SQLite, and MySQL; SQL Server rejects both and
+must use `ON`. `CROSS JOIN` is available for every bundled SQL driver.
 
 Window functions use `.over(...)`:
 
@@ -789,8 +843,11 @@ Supported directly:
 - `DISTINCT`
 - `WHERE` with SQL precedence preserved by explicit grouping
 - `IN`, `NOT IN`, `IN (subquery)`
-- `JOIN` / `LEFT JOIN` / `RIGHT JOIN` / `FULL JOIN` (`FULL JOIN` only for
-  dialects implementing `SupportsFullJoin`; MySQL and MariaDB do not)
+- `JOIN` / `LEFT JOIN` / `RIGHT JOIN` / `FULL JOIN` / `CROSS JOIN`
+- `JOIN ... USING (...)` and `NATURAL JOIN` on dialects implementing
+  `SupportsUsing` / `SupportsNaturalJoin`; SQL Server does not support either
+  (`FULL JOIN` is similarly gated by `SupportsFullJoin`; MySQL and MariaDB do
+  not support it)
 - `GROUP BY` and `HAVING`
 - `ORDER BY`, `LIMIT`, `OFFSET`
 - `COUNT(*)`, `COUNT(expr)`, `COUNT(DISTINCT expr)` (SQL Server renders these
@@ -807,6 +864,7 @@ Supported directly:
 Not modeled yet:
 
 - `UNION` / `INTERSECT` / `EXCEPT`
+- `EXISTS` / `NOT EXISTS`
 - column aliases and ordered null placement
 
 Those are the next places where the builder stops simulating SQL and starts
@@ -1048,15 +1106,23 @@ impl wormx::SqlSyntax for MssqlDialect {
 
 Capabilities are marker traits, not a separate boolean table. For example,
 `SupportsReturning` gates `exec_returning`, `SupportsFullJoin` gates
-`Join::full`, and `SupportsUpsert` gates `Db::upsert`; an unsupported operation
-is a compile-time error instead of a rendered statement that the database
-rejects.
+`Join::full`, `SupportsUsing` gates `Join::using`, `SupportsNaturalJoin` gates
+`Join::natural`, and `SupportsUpsert` gates `Db::upsert`. An unsupported
+operation is a compile-time error instead of a rendered statement that the
+database rejects.
 
 ```rust
 impl wormx::SupportsFullJoin for MssqlDialect {}
+impl wormx::SupportsSourceSuffix for MssqlDialect {}
+impl wormx::SupportsStatementTail for MssqlDialect {}
 impl wormx::SupportsFullTextSearch for MssqlDialect {}
 impl wormx::SupportsUpsert for MssqlDialect {}
+// SQL Server does not support USING or NATURAL JOIN.
 ```
+
+`SupportsSourceSuffix` and `SupportsStatementTail` gate the typed
+`with_source_suffix` / `with_tail` builders. The raw plan fields remain
+available as low-level escape hatches for custom renderers.
 
 Compile-time schema inspection remains in `TableDriver`, not `Dialect`.
 
@@ -1064,7 +1130,7 @@ The AST and typed query builder live in core. The literal SQL text is produced
 by the dialect layer:
 
 - `SELECT`, `FROM`, `WHERE`, `AND`, `OR`
-- `JOIN`, `ON`, `AS`
+- `JOIN`, `CROSS JOIN`, `NATURAL JOIN`, `ON`, `USING`, `AS`
 - `GROUP BY`, `HAVING`, `ORDER BY`, `ASC`, `DESC`
 - `COUNT`, `DISTINCT`, `IN`, `NOT IN`, `IS NULL`, `LIKE`
 - boolean literals, operators, functions
