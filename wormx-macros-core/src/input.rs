@@ -2,7 +2,7 @@ use std::collections::HashSet;
 
 use proc_macro2::{Span, TokenStream, TokenTree};
 use syn::parse::{Parse, ParseStream};
-use wormx_core::TableRef;
+use wormx_core::{RelationMode, TableRef};
 
 pub struct TableMacroInput {
     pub table: TableRef,
@@ -15,6 +15,12 @@ pub struct TableMacroInput {
     pub attrs: Vec<TokenStream>,
     /// Attributes applied to every generated relation field.
     pub relation_attrs: Vec<TokenStream>,
+    /// Relation generation mode from `relations(...)`.
+    pub relations: Option<RelationMode>,
+    /// Relation names to generate in `explicit` mode.
+    pub include_relations: Vec<String>,
+    /// Relation names to omit.
+    pub skip_relations: Vec<String>,
     pub columns: Vec<ColumnMacroOptions>,
 }
 
@@ -25,6 +31,8 @@ pub struct ColumnMacroOptions {
     pub field_name: Option<syn::Ident>,
     /// Field attributes, written without the surrounding `#[...]`.
     pub attrs: Vec<TokenStream>,
+    /// Whether this column is omitted from the generated row type.
+    pub skip: bool,
     pub span: Span,
 }
 
@@ -45,6 +53,9 @@ impl Parse for TableMacroInput {
         let mut derives = None;
         let mut attrs = Vec::new();
         let mut relation_attrs = Vec::new();
+        let mut relations = None;
+        let mut include_relations = Vec::new();
+        let mut skip_relations = Vec::new();
         let mut columns = Vec::new();
 
         if input.peek(syn::token::Brace) {
@@ -68,13 +79,21 @@ impl Parse for TableMacroInput {
                     }
                     "attrs" => attrs = parse_attrs(&content)?,
                     "relation_attrs" => relation_attrs = parse_attrs(&content)?,
+                    "relations" => relations = Some(parse_relation_mode(&content)?),
+                    "include_relations" => {
+                        include_relations = parse_relation_names(&content)?;
+                    }
+                    "skip_relations" => {
+                        skip_relations = parse_relation_names(&content)?;
+                    }
                     "columns" => columns = parse_columns(&content)?,
                     _ => {
                         return Err(syn::Error::new(
                             option.span(),
                             format!(
                                 "unknown `table!` option {option_name:?}; expected `derives`, \
-                                 `attrs`, `relation_attrs`, or `columns`"
+                                 `attrs`, `relation_attrs`, `relations`, `include_relations`, \
+                                 `skip_relations`, or `columns`"
                             ),
                         ));
                     }
@@ -103,9 +122,53 @@ impl Parse for TableMacroInput {
             derives,
             attrs,
             relation_attrs,
+            relations,
+            include_relations,
+            skip_relations,
             columns,
         })
     }
+}
+
+fn parse_relation_mode(input: ParseStream<'_>) -> syn::Result<RelationMode> {
+    let content;
+    syn::parenthesized!(content in input);
+
+    let ident: syn::Ident = content.parse()?;
+    let mode = ident
+        .to_string()
+        .parse()
+        .map_err(|message| syn::Error::new(ident.span(), message))?;
+
+    if !content.is_empty() {
+        return Err(content.error("expected a single relation mode"));
+    }
+
+    Ok(mode)
+}
+
+fn parse_relation_names(input: ParseStream<'_>) -> syn::Result<Vec<String>> {
+    let content;
+    syn::parenthesized!(content in input);
+
+    let mut names = Vec::new();
+    while !content.is_empty() {
+        if content.peek(syn::LitStr) {
+            let literal: syn::LitStr = content.parse()?;
+            names.push(literal.value());
+        } else {
+            let ident: syn::Ident = content.parse()?;
+            names.push(unraw(&ident));
+        }
+
+        if content.peek(syn::Token![,]) {
+            content.parse::<syn::Token![,]>()?;
+        } else if !content.is_empty() {
+            return Err(content.error("expected `,` between relation names"));
+        }
+    }
+
+    Ok(names)
 }
 
 fn parse_columns(input: ParseStream<'_>) -> syn::Result<Vec<ColumnMacroOptions>> {
@@ -132,6 +195,7 @@ fn parse_columns(input: ParseStream<'_>) -> syn::Result<Vec<ColumnMacroOptions>>
         };
 
         let mut attrs = Vec::new();
+        let mut skip = false;
         if content.peek(syn::token::Brace) {
             let options;
             syn::braced!(options in content);
@@ -142,10 +206,13 @@ fn parse_columns(input: ParseStream<'_>) -> syn::Result<Vec<ColumnMacroOptions>>
 
                 match option_name.as_str() {
                     "attrs" => attrs = parse_attrs(&options)?,
+                    "skip" => skip = true,
                     _ => {
                         return Err(syn::Error::new(
                             option.span(),
-                            format!("unknown column option {option_name:?}; expected `attrs`"),
+                            format!(
+                                "unknown column option {option_name:?}; expected `attrs` or `skip`"
+                            ),
                         ));
                     }
                 }
@@ -158,10 +225,18 @@ fn parse_columns(input: ParseStream<'_>) -> syn::Result<Vec<ColumnMacroOptions>>
             }
         }
 
+        if skip && (field_name.is_some() || !attrs.is_empty()) {
+            return Err(syn::Error::new(
+                span,
+                format!("column {name:?} is skipped; remove its `as` rename and `attrs` options"),
+            ));
+        }
+
         columns.push(ColumnMacroOptions {
             name,
             field_name,
             attrs,
+            skip,
             span,
         });
 
@@ -251,6 +326,9 @@ mod tests {
         assert!(input.derives.is_none());
         assert!(input.attrs.is_empty());
         assert!(input.relation_attrs.is_empty());
+        assert!(input.relations.is_none());
+        assert!(input.include_relations.is_empty());
+        assert!(input.skip_relations.is_empty());
         assert!(input.columns.is_empty());
     }
 
@@ -315,6 +393,61 @@ mod tests {
             "kind"
         );
         assert_eq!(input.columns[1].attrs.len(), 2);
+    }
+
+    #[test]
+    fn parses_skip_and_relation_options() {
+        let input = parse(quote! {
+            "public.users" as User {
+                relations(explicit),
+                include_relations(blogs, "posts"),
+                skip_relations(audit_logs),
+                columns {
+                    "password_hash" { skip },
+                    name,
+                },
+            }
+        })
+        .unwrap();
+
+        assert_eq!(input.relations, Some(RelationMode::Explicit));
+        assert_eq!(input.include_relations, ["blogs", "posts"]);
+        assert_eq!(input.skip_relations, ["audit_logs"]);
+        assert!(input.columns[0].skip);
+        assert!(!input.columns[1].skip);
+    }
+
+    #[test]
+    fn rejects_skip_with_rename_or_attrs() {
+        let error = parse(quote! {
+            "users" {
+                columns {
+                    "name" as display_name { skip },
+                },
+            }
+        })
+        .err()
+        .expect("skip with rename should fail");
+        assert!(error.to_string().contains("is skipped"));
+
+        let error = parse(quote! {
+            "users" {
+                columns {
+                    "name" { skip, attrs(doc = "name") },
+                },
+            }
+        })
+        .err()
+        .expect("skip with attrs should fail");
+        assert!(error.to_string().contains("is skipped"));
+    }
+
+    #[test]
+    fn rejects_invalid_relation_mode() {
+        let error = parse(quote!("users" { relations(sometimes) }))
+            .err()
+            .expect("invalid relation mode should fail");
+        assert!(error.to_string().contains("invalid relation mode"));
     }
 
     #[test]

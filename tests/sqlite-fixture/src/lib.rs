@@ -30,6 +30,30 @@ wormx::table! {
     }
 }
 
+wormx::table! {
+    "users" as SlimUser {
+        relations(outgoing),
+        columns {
+            "email" { skip },
+            "active" { skip },
+        },
+    }
+}
+
+wormx::table! {
+    "todos" as IncludedTodos {
+        relations(explicit),
+        include_relations(user),
+    }
+}
+
+wormx::table! {
+    "todos" as SkippedTodos {
+        relations(outgoing),
+        skip_relations(user),
+    }
+}
+
 wormx::sql_function! {
     pub fn lower(value: String) -> String;
 }
@@ -116,6 +140,27 @@ mod tests {
         assert_eq!(json["displayName"], "Bob");
         assert!(json.get("user_todos").is_none(), "{json}");
         assert!(json.get("reviewer_todos").is_none(), "{json}");
+    }
+
+    #[test]
+    fn column_and_relation_selection_is_applied() {
+        let slim = <SlimUser as wormx::Table>::DEF;
+        assert_eq!(slim.columns.len(), 4);
+        assert!(slim.columns.iter().any(|column| column.name == "email"));
+        assert!(slim.columns.iter().any(|column| column.name == "active"));
+        assert!(slim.relations.is_empty());
+
+        let slim = SlimUser::new(1, "Alice".to_owned());
+        assert_eq!(slim.name, "Alice");
+        assert_eq!(SlimUser::fields().name().name(), "name");
+
+        let included = <IncludedTodos as wormx::Table>::DEF;
+        assert_eq!(included.relations.len(), 1);
+        assert_eq!(included.relations[0].name, "user");
+
+        let skipped = <SkippedTodos as wormx::Table>::DEF;
+        assert_eq!(skipped.relations.len(), 1);
+        assert_eq!(skipped.relations[0].name, "reviewer");
     }
 
     #[test]

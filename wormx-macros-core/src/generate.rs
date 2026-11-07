@@ -7,7 +7,7 @@ use sqlx_core::column::Column;
 use sqlx_core::describe::Describe;
 use sqlx_core::type_checking::TypeChecking;
 use sqlx_core::type_info::TypeInfo;
-use wormx_core::{Config, TableRef, naming};
+use wormx_core::{Config, RelationMode, TableRef, naming};
 
 use crate::constraints::{Constraints, ForeignKey, IncomingForeignKey};
 use crate::input::TableMacroInput;
@@ -18,14 +18,66 @@ struct Field {
     db_name: String,
     inner_ty: syn::Type,
     ty: syn::Type,
-    sql_type: String,
     nullable: bool,
     primary_key: bool,
-    has_default: bool,
-    identity: bool,
-    generated: bool,
     doc: String,
     attrs: Vec<TokenStream>,
+}
+
+#[derive(Default)]
+struct CodegenPolicy {
+    relations: RelationMode,
+    include_relations: HashSet<String>,
+    skip_relations: HashSet<String>,
+    skip_columns: HashSet<String>,
+}
+
+fn table_config<'a>(config: &'a Config, table: &TableRef) -> Option<&'a wormx_core::TableConfig> {
+    config
+        .table_config(&table.qualified_name())
+        .or_else(|| config.table_config(&table.name))
+}
+
+fn codegen_policy(config: &Config, input: &TableMacroInput) -> CodegenPolicy {
+    let table_config = table_config(config, &input.table);
+    let relations = input
+        .relations
+        .or_else(|| table_config.and_then(|config| config.relations))
+        .unwrap_or(config.codegen.relations);
+
+    let mut skip_columns: HashSet<String> = table_config
+        .map(|config| config.skip_columns.iter().cloned().collect())
+        .unwrap_or_default();
+    skip_columns.extend(
+        input
+            .columns
+            .iter()
+            .filter(|column| column.skip)
+            .map(|column| column.name.clone()),
+    );
+
+    let mut include_relations: HashSet<String> = table_config
+        .map(|config| {
+            config
+                .include_relations
+                .iter()
+                .cloned()
+                .collect::<HashSet<_>>()
+        })
+        .unwrap_or_default();
+    include_relations.extend(input.include_relations.iter().cloned());
+
+    let mut skip_relations: HashSet<String> = table_config
+        .map(|config| config.skip_relations.iter().cloned().collect())
+        .unwrap_or_default();
+    skip_relations.extend(input.skip_relations.iter().cloned());
+
+    CodegenPolicy {
+        relations,
+        include_relations,
+        skip_relations,
+        skip_columns,
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -106,12 +158,69 @@ where
         )
     })?;
 
+    let policy = codegen_policy(config, input);
+    if !policy.include_relations.is_empty() && policy.relations != RelationMode::Explicit {
+        return Err(syn::Error::new(
+            input.span,
+            "`include_relations` / `include-relations` requires `relations = \"explicit\"`",
+        ));
+    }
+
+    if let Some(table_config) = table_config(config, table) {
+        for column in &table_config.skip_columns {
+            if !describe
+                .columns()
+                .iter()
+                .any(|described| described.name() == column)
+            {
+                return Err(syn::Error::new(
+                    input.span,
+                    format!(
+                        "table {table_name:?} has no column {column:?} configured in \
+                         `skip-columns`"
+                    ),
+                ));
+            }
+        }
+    }
+
     let mut fields = Vec::with_capacity(describe.columns().len());
     let mut field_names = HashSet::new();
 
     for (index, column) in describe.columns().iter().enumerate() {
         let db_name = column.name().to_owned();
         let column_options = input.columns.iter().find(|options| options.name == db_name);
+        let config_skips_column = table_config(config, table)
+            .is_some_and(|config| config.skip_columns.iter().any(|column| column == &db_name));
+        let skipped = config_skips_column || column_options.is_some_and(|options| options.skip);
+
+        if skipped {
+            if constraints.is_primary_key(&db_name) {
+                return Err(syn::Error::new(
+                    input.span,
+                    format!(
+                        "cannot skip primary-key column {db_name:?} for table {table_name:?}; \
+                         primary keys are required by `get(...)` and relation generation"
+                    ),
+                ));
+            }
+
+            if config_skips_column
+                && column_options.is_some_and(|options| {
+                    options.field_name.is_some() || !options.attrs.is_empty()
+                })
+            {
+                return Err(syn::Error::new(
+                    input.span,
+                    format!(
+                        "column {db_name:?} is skipped by `[wormx.tables] skip-columns`; remove \
+                         its `columns` rename and attributes from `table!`"
+                    ),
+                ));
+            }
+
+            continue;
+        }
 
         let field_ident = match column_options.and_then(|options| options.field_name.clone()) {
             Some(ident) => ident,
@@ -186,12 +295,8 @@ where
             db_name,
             inner_ty,
             ty,
-            sql_type,
             nullable,
             primary_key,
-            has_default,
-            identity,
-            generated,
             doc,
             attrs: column_options
                 .map(|options| options.attrs.clone())
@@ -219,6 +324,7 @@ where
         &fields,
         &field_names,
         constraints,
+        &policy,
     )?;
 
     let visibility: syn::Visibility =
@@ -307,31 +413,35 @@ where
         None => quote!(::std::option::Option::None),
     };
 
-    let column_tokens = fields.iter().map(|field| {
-        let name = syn::LitStr::new(&field.db_name, Span::call_site());
-        let sql_type = syn::LitStr::new(&field.sql_type, Span::call_site());
-        let nullable = field.nullable;
-        let primary_key = field.primary_key;
-        let has_default = field.has_default;
-        let identity = field.identity;
-        let generated = field.generated;
-        quote! {
-            ::wormx::ColumnDef {
-                name: #name,
-                sql_type: #sql_type,
-                nullable: #nullable,
-                primary_key: #primary_key,
-                has_default: #has_default,
-                identity: #identity,
-                generated: #generated,
-            }
-        }
-    });
-
-    let primary_key_tokens = fields
+    let column_tokens = describe
+        .columns()
         .iter()
-        .filter(|field| field.primary_key)
-        .map(|field| syn::LitStr::new(&field.db_name, Span::call_site()));
+        .enumerate()
+        .map(|(index, column)| {
+            let name = syn::LitStr::new(column.name(), Span::call_site());
+            let sql_type = syn::LitStr::new(column.type_info().name(), Span::call_site());
+            let nullable = describe.nullable(index).unwrap_or(true);
+            let primary_key = constraints.is_primary_key(column.name());
+            let has_default = constraints.has_default(column.name());
+            let identity = constraints.is_identity(column.name());
+            let generated = constraints.is_generated(column.name());
+            quote! {
+                ::wormx::ColumnDef {
+                    name: #name,
+                    sql_type: #sql_type,
+                    nullable: #nullable,
+                    primary_key: #primary_key,
+                    has_default: #has_default,
+                    identity: #identity,
+                    generated: #generated,
+                }
+            }
+        });
+
+    let primary_key_tokens = constraints
+        .primary_key
+        .iter()
+        .map(|column| syn::LitStr::new(column, Span::call_site()));
 
     let relation_tokens = relations.iter().map(|relation| {
         let name = syn::LitStr::new(&relation.field_name, Span::call_site());
@@ -432,8 +542,11 @@ fn collect_relations(
     fields: &[Field],
     column_names: &HashSet<String>,
     constraints: &Constraints,
+    policy: &CodegenPolicy,
 ) -> syn::Result<Vec<Relation>> {
-    let mut relations = Vec::new();
+    let mut candidates = Vec::new();
+    let mut candidate_names = HashSet::new();
+    let mut unavailable = std::collections::HashMap::new();
     let mut used_names = column_names.clone();
 
     for fk in &constraints.foreign_keys {
@@ -441,32 +554,67 @@ fn collect_relations(
             continue;
         }
 
-        let source_key_fields = fk
-            .columns
-            .iter()
-            .filter_map(|column| fields.iter().find(|field| field.db_name == *column))
-            .map(|field| field.ident.clone())
-            .collect::<Vec<_>>();
-        if source_key_fields.len() != fk.columns.len() {
+        let name = outgoing_relation_name(fk, &mut used_names);
+        candidate_names.insert(name.clone());
+        if !relation_selected(policy, &name, RelationKind::BelongsTo) {
             continue;
         }
 
+        let missing_source = missing_columns(fields, &fk.columns);
+        let skipped_target = fk
+            .referenced_columns
+            .iter()
+            .filter(|column| {
+                table_column_skipped(config, input, policy, &fk.referenced_table, column)
+            })
+            .cloned()
+            .collect::<Vec<_>>();
+        if !missing_source.is_empty() || !skipped_target.is_empty() {
+            unavailable.insert(
+                name,
+                unavailable_reason(&missing_source, &skipped_target, &[]),
+            );
+            continue;
+        }
+
+        let source_key_fields = fk
+            .columns
+            .iter()
+            .map(|column| {
+                fields
+                    .iter()
+                    .find(|field| field.db_name == *column)
+                    .expect("missing columns were checked above")
+                    .ident
+                    .clone()
+            })
+            .collect::<Vec<_>>();
         let source_key_tys = fk
             .columns
             .iter()
-            .filter_map(|column| fields.iter().find(|field| field.db_name == *column))
-            .map(|field| field.inner_ty.clone())
+            .map(|column| {
+                fields
+                    .iter()
+                    .find(|field| field.db_name == *column)
+                    .expect("missing columns were checked above")
+                    .inner_ty
+                    .clone()
+            })
             .collect::<Vec<_>>();
         let source_key_nullable = fk
             .columns
             .iter()
-            .filter_map(|column| fields.iter().find(|field| field.db_name == *column))
-            .map(|field| field.nullable)
+            .map(|column| {
+                fields
+                    .iter()
+                    .find(|field| field.db_name == *column)
+                    .expect("missing columns were checked above")
+                    .nullable
+            })
             .collect::<Vec<_>>();
         let optional = source_key_nullable.iter().any(|value| *value);
         let target_ty =
             relation_target_type(config, input, struct_name, &fk.referenced_table, input.span)?;
-        let name = outgoing_relation_name(fk, &mut used_names);
         let storage_ty: syn::Type = if optional {
             let target = target_ty.clone();
             syn::parse_quote!(::std::option::Option<#target>)
@@ -487,7 +635,7 @@ fn collect_relations(
             syn::parse_quote!((#(#source_key_tys),*))
         };
 
-        relations.push(Relation {
+        candidates.push(Relation {
             kind: RelationKind::BelongsTo,
             field_ident: relation_ident(&name, input.span)?,
             field_name: name,
@@ -529,15 +677,48 @@ fn collect_relations(
             continue;
         }
 
+        let count = incoming_counts
+            .get(&incoming.source_table.qualified_name())
+            .copied()
+            .unwrap_or(1);
+        let name = incoming_relation_name(incoming, count, &mut used_names);
+        candidate_names.insert(name.clone());
+        if !relation_selected(policy, &name, RelationKind::HasMany) {
+            continue;
+        }
+
+        let missing_source = missing_columns(fields, &incoming.referenced_columns);
+        let skipped_target = incoming
+            .columns
+            .iter()
+            .filter(|column| {
+                table_column_skipped(config, input, policy, &incoming.source_table, column)
+            })
+            .cloned()
+            .collect::<Vec<_>>();
+        if !missing_source.is_empty() || !skipped_target.is_empty() {
+            unavailable.insert(
+                name,
+                unavailable_reason(&missing_source, &skipped_target, &[]),
+            );
+            continue;
+        }
+
         let source_fields = incoming
             .referenced_columns
             .iter()
-            .filter_map(|column| fields.iter().find(|field| field.db_name == *column))
+            .map(|column| {
+                fields
+                    .iter()
+                    .find(|field| field.db_name == *column)
+                    .expect("missing columns were checked above")
+            })
             .collect::<Vec<_>>();
-        if source_fields.len() != incoming.referenced_columns.len() {
-            continue;
-        }
         if source_fields.iter().any(|field| field.nullable) {
+            unavailable.insert(
+                name,
+                unavailable_reason(&[], &[], &incoming.referenced_columns),
+            );
             continue;
         }
 
@@ -552,11 +733,6 @@ fn collect_relations(
             &incoming.source_table,
             input.span,
         )?;
-        let count = incoming_counts
-            .get(&incoming.source_table.qualified_name())
-            .copied()
-            .unwrap_or(1);
-        let name = incoming_relation_name(incoming, count, &mut used_names);
         let include_ident = include_ident(struct_name, "HasMany", &name, input.span)?;
         let handle_ident = handle_ident(struct_name, &name, input.span)?;
         let target_key_accessors = incoming
@@ -570,7 +746,7 @@ fn collect_relations(
             syn::parse_quote!((#(#source_key_tys),*))
         };
 
-        relations.push(Relation {
+        candidates.push(Relation {
             kind: RelationKind::HasMany,
             field_ident: relation_ident(&name, input.span)?,
             field_name: name,
@@ -601,7 +777,136 @@ fn collect_relations(
         });
     }
 
-    Ok(relations)
+    for name in &policy.include_relations {
+        if !candidate_names.contains(name) {
+            return Err(unknown_relation_error(
+                input,
+                &input.table.qualified_name(),
+                name,
+                &candidate_names,
+            ));
+        }
+        if let Some(reason) = unavailable.get(name) {
+            return Err(syn::Error::new(
+                input.span,
+                format!("cannot include relation {name:?}: {reason}"),
+            ));
+        }
+    }
+
+    for name in &policy.skip_relations {
+        if !candidate_names.contains(name) {
+            return Err(unknown_relation_error(
+                input,
+                &input.table.qualified_name(),
+                name,
+                &candidate_names,
+            ));
+        }
+    }
+
+    Ok(candidates)
+}
+
+fn relation_selected(policy: &CodegenPolicy, name: &str, kind: RelationKind) -> bool {
+    if policy.skip_relations.contains(name) {
+        return false;
+    }
+
+    match policy.relations {
+        RelationMode::Auto => true,
+        RelationMode::Outgoing => kind == RelationKind::BelongsTo,
+        RelationMode::Incoming => kind == RelationKind::HasMany,
+        RelationMode::Explicit => policy.include_relations.contains(name),
+        RelationMode::None => false,
+    }
+}
+
+fn missing_columns(fields: &[Field], columns: &[String]) -> Vec<String> {
+    columns
+        .iter()
+        .filter(|column| !fields.iter().any(|field| field.db_name == **column))
+        .cloned()
+        .collect()
+}
+
+fn unavailable_reason(
+    missing_source: &[String],
+    skipped_target: &[String],
+    nullable_source: &[String],
+) -> String {
+    let mut reasons = Vec::new();
+    if !missing_source.is_empty() {
+        reasons.push(format!(
+            "source column(s) {} are skipped or unavailable",
+            quoted_list(missing_source)
+        ));
+    }
+    if !skipped_target.is_empty() {
+        reasons.push(format!(
+            "target column(s) {} are skipped",
+            quoted_list(skipped_target)
+        ));
+    }
+    if !nullable_source.is_empty() {
+        reasons.push(format!(
+            "referenced column(s) {} are nullable",
+            quoted_list(nullable_source)
+        ));
+    }
+
+    reasons.join("; ")
+}
+
+fn quoted_list(columns: &[String]) -> String {
+    columns
+        .iter()
+        .map(|column| format!("{column:?}"))
+        .collect::<Vec<_>>()
+        .join(", ")
+}
+
+fn unknown_relation_error(
+    input: &TableMacroInput,
+    table_name: &str,
+    name: &str,
+    candidate_names: &HashSet<String>,
+) -> syn::Error {
+    let mut known = candidate_names.iter().cloned().collect::<Vec<_>>();
+    known.sort();
+
+    syn::Error::new(
+        input.span,
+        format!(
+            "table {table_name:?} has no relation {name:?}; known relations: {}",
+            if known.is_empty() {
+                "<none>".to_owned()
+            } else {
+                known.join(", ")
+            }
+        ),
+    )
+}
+
+fn table_column_skipped(
+    config: &Config,
+    input: &TableMacroInput,
+    policy: &CodegenPolicy,
+    table: &TableRef,
+    column: &str,
+) -> bool {
+    if table == &input.table {
+        return policy.skip_columns.contains(column);
+    }
+
+    let Some(table_config) = table_config(config, table) else {
+        return false;
+    };
+
+    table_config
+        .skip_columns
+        .iter()
+        .any(|skipped| skipped == column)
 }
 
 fn outgoing_relation_name(fk: &ForeignKey, used: &mut HashSet<String>) -> String {
@@ -1861,5 +2166,49 @@ fn quote_from_row(
                 })
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use quote::quote;
+
+    #[test]
+    fn relation_policy_merges_config_and_macro_options() {
+        let mut config = Config::default();
+        config.codegen.relations = RelationMode::Outgoing;
+        config.tables.insert(
+            "public.users".to_owned(),
+            wormx_core::TableConfig {
+                skip_columns: vec!["password_hash".to_owned()],
+                relations: Some(RelationMode::Explicit),
+                include_relations: vec!["blogs".to_owned()],
+                skip_relations: vec!["audit_logs".to_owned()],
+                ..Default::default()
+            },
+        );
+
+        let input: TableMacroInput = syn::parse2(quote! {
+            "public.users" {
+                relations(none),
+                include_relations(posts),
+                skip_relations(likes),
+                columns {
+                    "avatar" { skip },
+                },
+            }
+        })
+        .unwrap();
+
+        let policy = codegen_policy(&config, &input);
+
+        assert_eq!(policy.relations, RelationMode::None);
+        assert!(policy.skip_columns.contains("password_hash"));
+        assert!(policy.skip_columns.contains("avatar"));
+        assert!(policy.include_relations.contains("blogs"));
+        assert!(policy.include_relations.contains("posts"));
+        assert!(policy.skip_relations.contains("audit_logs"));
+        assert!(policy.skip_relations.contains("likes"));
     }
 }

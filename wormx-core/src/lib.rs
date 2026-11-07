@@ -25,7 +25,8 @@ pub mod schema;
 pub mod sql;
 
 pub use config::{
-    CodegenConfig, Config, ConfigError, PreferredDateTime, PreferredNumeric, TableConfig,
+    CodegenConfig, Config, ConfigError, PreferredDateTime, PreferredNumeric, RelationMode,
+    TableConfig,
 };
 pub use exec::{Db, RawQuery, Transaction};
 pub use plan::deferred::Deferred;

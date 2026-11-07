@@ -16,10 +16,13 @@ mod drivers;
 ///     "public.users" as User {
 ///         derives(Debug, Clone, serde::Serialize),
 ///         attrs(serde(rename_all = "camelCase")),
+///         relations(outgoing),
+///         skip_relations(audit_logs),
 ///         columns {
 ///             "type" as kind {
 ///                 attrs(serde(rename = "type")),
 ///             },
+///             "archived" { skip },
 ///         },
 ///     }
 /// }

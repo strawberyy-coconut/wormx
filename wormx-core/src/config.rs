@@ -66,6 +66,7 @@ pub struct CodegenToml {
     pub derives: Option<Vec<String>>,
     pub visibility: Option<String>,
     pub from_row: Option<bool>,
+    pub relations: Option<RelationMode>,
 }
 
 #[derive(Debug, Clone, Default, Deserialize)]
@@ -75,6 +76,45 @@ pub struct TableToml {
     #[serde(rename = "struct")]
     pub struct_name: Option<String>,
     pub rust_path: Option<String>,
+    pub skip_columns: Vec<String>,
+    pub relations: Option<RelationMode>,
+    pub include_relations: Vec<String>,
+    pub skip_relations: Vec<String>,
+}
+
+/// Which foreign-key relations `table!` generates for a row type.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum RelationMode {
+    /// Generate outgoing `belongs_to` and incoming `has_many` relations.
+    #[default]
+    Auto,
+    /// Generate only outgoing `belongs_to` relations.
+    Outgoing,
+    /// Generate only incoming `has_many` relations.
+    Incoming,
+    /// Generate only the relations named by `include-relations`.
+    Explicit,
+    /// Generate no relations.
+    None,
+}
+
+impl std::str::FromStr for RelationMode {
+    type Err = String;
+
+    fn from_str(value: &str) -> Result<Self, Self::Err> {
+        match value {
+            "auto" => Ok(Self::Auto),
+            "outgoing" => Ok(Self::Outgoing),
+            "incoming" => Ok(Self::Incoming),
+            "explicit" => Ok(Self::Explicit),
+            "none" => Ok(Self::None),
+            _ => Err(format!(
+                "invalid relation mode {value:?}; expected `auto`, `outgoing`, `incoming`, \
+                 `explicit`, or `none`"
+            )),
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
@@ -101,6 +141,7 @@ pub struct CodegenConfig {
     pub derives: Vec<String>,
     pub visibility: String,
     pub from_row: bool,
+    pub relations: RelationMode,
 }
 
 impl Default for CodegenConfig {
@@ -109,6 +150,7 @@ impl Default for CodegenConfig {
             derives: vec!["Debug".to_owned(), "Clone".to_owned()],
             visibility: "pub".to_owned(),
             from_row: true,
+            relations: RelationMode::Auto,
         }
     }
 }
@@ -118,6 +160,10 @@ impl Default for CodegenConfig {
 pub struct TableConfig {
     pub struct_name: Option<String>,
     pub rust_path: Option<String>,
+    pub skip_columns: Vec<String>,
+    pub relations: Option<RelationMode>,
+    pub include_relations: Vec<String>,
+    pub skip_relations: Vec<String>,
 }
 
 /// Merged configuration from `wormx.toml` and, when present, `sqlx.toml`.
@@ -236,6 +282,7 @@ impl Config {
                 .clone()
                 .unwrap_or_else(|| "pub".to_owned()),
             from_row: wormx.wormx.codegen.from_row.unwrap_or(true),
+            relations: wormx.wormx.codegen.relations.unwrap_or_default(),
         };
 
         for (table, table_config) in &wormx.wormx.tables {
@@ -244,6 +291,10 @@ impl Config {
                 TableConfig {
                     struct_name: table_config.struct_name.clone(),
                     rust_path: table_config.rust_path.clone(),
+                    skip_columns: table_config.skip_columns.clone(),
+                    relations: table_config.relations,
+                    include_relations: table_config.include_relations.clone(),
+                    skip_relations: table_config.skip_relations.clone(),
                 },
             );
         }
@@ -346,6 +397,66 @@ pub enum ConfigError {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn parses_relation_and_column_policy() {
+        let root = temp_dir("relation-policy");
+        std::fs::create_dir_all(&root).unwrap();
+        std::fs::write(
+            root.join("wormx.toml"),
+            r#"
+            [wormx.codegen]
+            relations = "outgoing"
+
+            [wormx.tables."public.users"]
+            skip-columns = ["password_hash"]
+            relations = "explicit"
+            include-relations = ["blogs"]
+            skip-relations = ["audit_logs"]
+            "#,
+        )
+        .unwrap();
+
+        let config = Config::load(&root).unwrap();
+        assert_eq!(config.codegen.relations, RelationMode::Outgoing);
+        let users = config.table_config("public.users").unwrap();
+        assert_eq!(users.skip_columns, ["password_hash"]);
+        assert_eq!(users.relations, Some(RelationMode::Explicit));
+        assert_eq!(users.include_relations, ["blogs"]);
+        assert_eq!(users.skip_relations, ["audit_logs"]);
+
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn rejects_invalid_relation_mode() {
+        let root = temp_dir("invalid-relation-mode");
+        std::fs::create_dir_all(&root).unwrap();
+        std::fs::write(
+            root.join("wormx.toml"),
+            r#"
+            [wormx.codegen]
+            relations = "sometimes"
+            "#,
+        )
+        .unwrap();
+
+        let error = Config::load(&root).expect_err("invalid relation mode should fail");
+        assert!(error.to_string().contains("failed to parse config file"));
+
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    fn temp_dir(name: &str) -> PathBuf {
+        std::env::temp_dir().join(format!(
+            "wormx-config-{name}-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ))
+    }
 
     #[test]
     fn merges_sqlx_and_wormx_config() {

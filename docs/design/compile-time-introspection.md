@@ -75,6 +75,7 @@ from-row = true
 [wormx.tables."public.users"]
 struct = "User"
 rust-path = "crate::models::User"
+skip-columns = ["password_hash"]
 
 [macros.preferred-crates]
 date-time = "chrono"
@@ -91,7 +92,9 @@ numeric = "rust_decimal"
 Type overrides match the SQL type name exactly or uppercased, then with the
 table schema prefix. Table overrides match the qualified table name first, then
 the bare table name. `rust-path` is used for relation target types that live in
-another module.
+another module. `skip-columns` controls the generated row API; relation
+selection (`relations`, `include-relations`, `skip-relations`) is documented in
+[Relations](relations.md).
 
 ### Environment variables
 
@@ -133,6 +136,7 @@ wormx::table! {
             "type" as kind {
                 attrs(serde(rename = "type"), schema(rename = "type")),
             },
+            "archived" { skip },
         },
     }
 }
@@ -147,6 +151,19 @@ wormx::table! {
 - `columns { "db_column" as field_name { ... } }` renames a field and applies
   attributes. The column name may be written unquoted, and `as` is optional when
   only attributes are needed.
+- `skip` on a column, or `skip-columns = [...]` in `[wormx.tables]`, omits the
+  column from the generated row struct, `Fields` handles, `new(...)`, the
+  `FromRow` initializer, and the hidden column accessors. Matching uses the
+  database column name. `skip` cannot be combined with `as` or `attrs`.
+- Skipping a primary-key column is an error: primary keys are required by
+  `get(...)` and relation generation.
+- Skipping a column is a codegen-shape control, not a security boundary.
+  `SELECT *` still returns the column, and raw SQL can still read it.
+- `Table::DEF.columns` and `Table::DEF.primary_key` still describe the complete
+  database schema. A skipped column is absent from the generated API, not from
+  the metadata.
+- Relations that depend on a skipped key column are omitted. See
+  [Relations](relations.md).
 
 ## The `TableDriver` seam
 
@@ -198,6 +215,9 @@ backend can depend on `wormx-macros-core` directly and expose its own macro.
   credentials, or rendered SQL.
 - **Caches are committed.** CI builds should not need a database. Refresh the
   cache explicitly with `WORMX_REDO_CACHE=1` after migrations.
+- **Column selection is a codegen policy, not schema truth.** The cache and
+  `Table::DEF` describe the database; `skip-columns` decides which of those
+  columns become part of the generated row type.
 - **`.env` changes need a rebuild trigger.** Cargo does not track proc-macro file
   reads.
 - **Introspection is driver-owned.** Core does not know how to query

@@ -209,8 +209,11 @@ let owner = todos[0].user().loaded().expect("user was included");
 
 Composite foreign keys, nullable keys, and rename-safe relation loading are
 covered in [relations](https://github.com/strawberyy-coconut/wormx/blob/master/docs/design/relations.md).
-Many-to-many is deliberately not a generated relation type; a junction table is
-just another typed table and composes with the query builder.
+Relation generation can also be restricted per table with `relations`,
+`include-relations`, and `skip-relations`, so tables without a generated target
+type do not force the whole FK graph into the build. Many-to-many is
+deliberately not a generated relation type; a junction table is just another
+typed table and composes with the query builder.
 
 ## Joins, CTEs, and windows
 

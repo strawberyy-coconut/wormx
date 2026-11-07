@@ -37,6 +37,9 @@ wormx::table! {
         derives(Debug, Clone, serde::Serialize, utoipa::ToSchema),
         attrs(schema(as = SourceFileSchema)),
         relation_attrs(serde(skip), schema(ignore)),
+        relations(outgoing),
+        include_relations(blogs),
+        skip_relations(audit_logs),
         columns {
             publication_date {
                 attrs(
@@ -47,6 +50,7 @@ wormx::table! {
             "type" as kind {
                 attrs(serde(rename = "type"), schema(rename = "type")),
             },
+            "archived" { skip },
         },
     }
 }
@@ -60,9 +64,14 @@ wormx::table! {
   without the surrounding `#[...]`; attributes are forwarded as written.
 - `relation_attrs(...)` adds attributes to every generated relation field, for
   example `relation_attrs(serde(skip), schema(ignore))`.
+- `relations(mode)` selects which foreign-key relations are generated:
+  `auto`, `outgoing`, `incoming`, `explicit`, or `none`.
+- `include_relations(...)` lists relation field names to generate in `explicit`
+  mode. `skip_relations(...)` removes relation field names in any mode.
 - `columns { "db_column" as field_name { ... } }` renames a generated field and
   applies attributes. The column name may be unquoted, and `as` is optional when
-  only attributes are added.
+  only attributes are added. Add `skip` to omit the column from the generated
+  row type; `skip` cannot be combined with `as` or `attrs`.
 
 ## Generated API
 

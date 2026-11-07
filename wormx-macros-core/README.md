@@ -80,10 +80,15 @@ url-var = "DATABASE_URL"
 derives = ["Debug", "Clone"]
 visibility = "pub"
 from-row = true
+relations = "auto"
 
 [wormx.tables."public.users"]
 struct = "User"
 rust-path = "crate::models::User"
+skip-columns = ["password_hash"]
+relations = "explicit"
+include-relations = ["blogs"]
+skip-relations = ["audit_logs"]
 ```
 
 Type and column overrides use the `[macros]` sections from `wormx.toml` or

@@ -27,6 +27,74 @@ A foreign key on this table generates `belongs_to`; the referenced table gets a
 matching `has_many`. The target type is derived from the target table name, or
 from `[wormx.tables."..."] struct` / `rust-path`.
 
+## Which relations are generated
+
+The candidate graph comes from foreign keys, but code generation can select a
+subset of it. This is useful for incremental adoption, for avoiding tables that
+are not generated with `table!`, and for cutting the reverse edges of large
+schemas.
+
+```toml
+[wormx.codegen]
+relations = "auto"
+
+[wormx.tables."public.users"]
+relations = "outgoing"
+skip-relations = ["audit_logs"]
+
+[wormx.tables."public.posts"]
+relations = "explicit"
+include-relations = ["blogs", "author"]
+
+[wormx.tables."public.audit_logs"]
+relations = "none"
+```
+
+The same policy can be set for one `table!` invocation:
+
+```rust
+wormx::table! {
+    "public.users" as User {
+        relations(outgoing),
+        include_relations(blogs),
+        skip_relations(audit_logs),
+    }
+}
+```
+
+Modes:
+
+| mode | generated relations |
+|---|---|
+| `auto` | outgoing `belongs_to` and incoming `has_many` |
+| `outgoing` | only foreign keys defined by this table |
+| `incoming` | only foreign keys that reference this table |
+| `explicit` | only names in `include-relations` |
+| `none` | no relations |
+
+Resolution order is macro option, then `[wormx.tables."..."]`, then
+`[wormx.codegen]`, then `auto`. Include and skip lists are additive across
+config and the macro, and skip wins. Names are the generated relation field
+names (`blogs`, `user_todos`), and unknown names are errors. `include-relations`
+is only valid with `explicit` mode.
+
+A skipped relation is never emitted, so its target type is never referenced.
+For example, `table!("public.users")` can be generated without `table!("blogs")`
+by skipping the `blogs` relation. `explicit` mode is the typed alternative to
+hand-writing a `Deferred` field: the edges are chosen by the user, but the macro
+still resolves target types, accessors, and include types.
+
+Relations whose key columns are omitted with `skip-columns` are pruned
+automatically. Explicitly including such a relation is an error. See
+[Compile-time introspection](compile-time-introspection.md) for column
+selection.
+
+Target-side skips are visible when they come from `wormx.toml`. A macro-local
+`skip` on the target's `table!` invocation, or a target generated in another
+crate with different config, is not visible to the source expansion; keep
+relation-key skips in shared config or pair them with a source-side
+`skip-relations`.
+
 ## Deferred loading
 
 Relation fields are private and stored as `Deferred` values. The relation
@@ -134,8 +202,13 @@ let teams = db
 
 ## Constraints and decisions
 
-- **Relations are FK-driven.** The generated graph follows the database's
-  declared foreign keys; there is no separate relation configuration file.
+- **Relations are FK-driven but selectable.** The candidate graph follows the
+  database's declared foreign keys; `relations`, `include-relations`, and
+  `skip-relations` choose which candidates become generated accessors. No
+  relation definitions are hand-written; the policy only narrows the
+  FK-derived candidates.
+- **Skipped key columns prune relations.** Column selection is owned by the
+  introspection options; relation code follows the surviving field set.
 - **Private fields, public accessors.** Storage is private so the deferred state
   cannot be bypassed; accessors expose query and loaded forms.
 - **Batched includes, not N+1 queries.** Includes resolve distinct keys and issue
