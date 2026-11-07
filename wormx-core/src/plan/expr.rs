@@ -4,6 +4,16 @@
 //! renderer that interprets [`ExprKind`] into its own query language. The SQL
 //! renderer lives in [`crate::sql::expr`].
 
+mod case;
+mod column;
+mod functions;
+mod order;
+
+pub use self::case::Case;
+pub use self::column::{ColumnExpr, ColumnRef};
+pub use self::functions::{coalesce, count_star, dense_rank, rank, row_number};
+pub use self::order::{Order, Window};
+
 use std::marker::PhantomData;
 
 use sqlx_core::encode::Encode;
@@ -16,46 +26,6 @@ use super::command::Writer;
 use super::query::{Column, Subquery};
 
 /// A qualified column reference.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct ColumnRef {
-    pub schema: Option<String>,
-    pub table: String,
-    pub alias: Option<String>,
-    pub column: String,
-}
-
-impl ColumnRef {
-    pub fn new(
-        schema: Option<impl Into<String>>,
-        table: impl Into<String>,
-        column: impl Into<String>,
-    ) -> Self {
-        Self {
-            schema: schema.map(Into::into),
-            table: table.into(),
-            alias: None,
-            column: column.into(),
-        }
-    }
-
-    pub fn with_alias(
-        schema: Option<impl Into<String>>,
-        table: impl Into<String>,
-        alias: Option<impl Into<String>>,
-        column: impl Into<String>,
-    ) -> Self {
-        Self {
-            schema: schema.map(Into::into),
-            table: table.into(),
-            alias: alias.map(Into::into),
-            column: column.into(),
-        }
-    }
-}
-
-/// Compatibility alias for the old name.
-pub type ColumnExpr = ColumnRef;
-
 /// A value that can be written into a query as a bound argument.
 ///
 /// SQLx's `Encode` and `Type` traits are database-level, not SQL-level, so a
@@ -164,48 +134,6 @@ pub enum ExprKind<D: Dialect> {
     /// meaningful inside an upsert's update clause.
     InputColumn(ColumnRef),
     Custom(Box<dyn CustomNode<D>>),
-}
-
-/// A `CASE` expression under construction.
-///
-/// Start one with [`Expr::case`], add branches with [`Case::when`], and finish
-/// with either [`Case::otherwise`] or [`Case::end`].
-pub struct Case<T, D: Dialect> {
-    branches: Vec<(Expr<(), D>, Expr<(), D>)>,
-    _marker: PhantomData<fn() -> T>,
-}
-
-impl<T, D: Dialect> Case<T, D> {
-    /// Adds a `WHEN condition THEN value` branch.
-    pub fn when<C, V>(mut self, condition: C, value: V) -> Self
-    where
-        C: IntoExpr<bool, D>,
-        V: IntoExpr<T, D>,
-    {
-        self.branches
-            .push((condition.into_expr().erase(), value.into_expr().erase()));
-        self
-    }
-
-    /// Finishes the expression with `ELSE value`.
-    pub fn otherwise<V>(self, value: V) -> Expr<T, D>
-    where
-        V: IntoExpr<T, D>,
-    {
-        Expr::from_kind(ExprKind::Case {
-            branches: self.branches,
-            otherwise: Some(Box::new(value.into_expr().erase())),
-        })
-    }
-
-    /// Finishes the expression without an `ELSE`, producing `NULL` when no
-    /// branch matches.
-    pub fn end(self) -> Expr<Option<T>, D> {
-        Expr::from_kind(ExprKind::Case {
-            branches: self.branches,
-            otherwise: None,
-        })
-    }
 }
 
 /// A typed expression.
@@ -591,99 +519,6 @@ impl<T, D: Dialect> Expr<T, D> {
     }
 }
 
-/// A rendered `ORDER BY` term.
-pub struct Order<D: Dialect> {
-    node: Box<Expr<(), D>>,
-    descending: bool,
-}
-
-impl<D: Dialect> Order<D> {
-    pub fn expr(&self) -> &Expr<(), D> {
-        &self.node
-    }
-
-    pub fn expr_mut(&mut self) -> &mut Expr<(), D> {
-        &mut self.node
-    }
-
-    pub fn descending(&self) -> bool {
-        self.descending
-    }
-}
-
-/// A window specification: `PARTITION BY ... ORDER BY ...`.
-pub struct Window<D: Dialect> {
-    partition_by: Vec<Expr<(), D>>,
-    order_by: Vec<Order<D>>,
-}
-
-impl<D: Dialect> Window<D> {
-    pub fn new() -> Self {
-        Self {
-            partition_by: Vec::new(),
-            order_by: Vec::new(),
-        }
-    }
-
-    pub fn partition_by<E, V>(mut self, expression: V) -> Self
-    where
-        V: IntoExpr<E, D>,
-    {
-        self.partition_by.push(expression.into_expr().erase());
-        self
-    }
-
-    pub fn order_by(mut self, order: Order<D>) -> Self {
-        self.order_by.push(order);
-        self
-    }
-
-    pub fn partition_by_items(&self) -> &[Expr<(), D>] {
-        &self.partition_by
-    }
-
-    pub fn partition_by_items_mut(&mut self) -> &mut [Expr<(), D>] {
-        &mut self.partition_by
-    }
-
-    pub fn order_by_items(&self) -> &[Order<D>] {
-        &self.order_by
-    }
-
-    pub fn order_by_items_mut(&mut self) -> &mut [Order<D>] {
-        &mut self.order_by
-    }
-}
-
-impl<D: Dialect> Default for Window<D> {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
-/// `COUNT(*)`.
-pub fn count_star<D: Dialect>() -> Expr<i64, D> {
-    Expr::from_kind(ExprKind::Count {
-        operand: Box::new(Expr::from_kind(ExprKind::Star)),
-        distinct: false,
-    })
-}
-
-/// `ROW_NUMBER()`.
-pub fn row_number<D: Dialect>() -> Expr<i64, D> {
-    Expr::function("ROW_NUMBER", Vec::new())
-}
-
-/// `RANK()`.
-pub fn rank<D: Dialect>() -> Expr<i64, D> {
-    Expr::function("RANK", Vec::new())
-}
-
-/// `DENSE_RANK()`.
-pub fn dense_rank<D: Dialect>() -> Expr<i64, D> {
-    Expr::function("DENSE_RANK", Vec::new())
-}
-
 /// Converts either a typed expression or a Rust value into an expression.
 pub trait IntoExpr<T, D: Dialect> {
     fn into_expr(self) -> Expr<T, D>;
@@ -703,17 +538,4 @@ where
     fn into_expr(self) -> Expr<T, D> {
         Expr::value(self)
     }
-}
-
-/// `COALESCE(left, right)` with the arguments' expression type.
-pub fn coalesce<D, T, A, B>(left: A, right: B) -> Expr<T, D>
-where
-    D: Dialect,
-    A: IntoExpr<T, D>,
-    B: IntoExpr<T, D>,
-{
-    Expr::function(
-        "COALESCE",
-        vec![left.into_expr().erase(), right.into_expr().erase()],
-    )
 }
